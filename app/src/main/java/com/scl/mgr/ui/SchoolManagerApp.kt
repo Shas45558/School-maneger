@@ -65,7 +65,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
-                        modifier = Modifier.size(56.dp).clip(CircleShape),
+                        modifier = Modifier.size(56.dp),
                         shape = CircleShape,
                         color = MaterialTheme.colorScheme.primaryContainer
                     ) {
