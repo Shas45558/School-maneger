@@ -1,6 +1,5 @@
 package com.scl.mgr.ui
 
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -11,15 +10,12 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
-import com.scl.mgr.R
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
@@ -68,11 +64,20 @@ fun SchoolManagerApp(repository: SchoolRepository) {
                     modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Image(
-                        painter = painterResource(R.mipmap.ic_launcher),
-                        contentDescription = "School Manager",
-                        modifier = Modifier.size(56.dp).clip(CircleShape)
-                    )
+                    Surface(
+                        modifier = Modifier.size(56.dp).clip(CircleShape),
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                imageVector = Icons.Default.School,
+                                contentDescription = "School Manager",
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(32.dp)
+                            )
+                        }
+                    }
                     Spacer(Modifier.width(14.dp))
                     Column {
                         Text("School Manager", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
@@ -543,11 +548,20 @@ private fun AboutScreen() {
         Modifier.fillMaxSize().padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Image(
-            painter = painterResource(R.mipmap.ic_launcher),
-            contentDescription = null,
-            modifier = Modifier.size(100.dp).clip(CircleShape)
-        )
+        Surface(
+            modifier = Modifier.size(100.dp),
+            shape = CircleShape,
+            color = MaterialTheme.colorScheme.primaryContainer
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    imageVector = Icons.Default.School,
+                    contentDescription = "School Manager",
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(56.dp)
+                )
+            }
+        }
         Spacer(Modifier.height(16.dp))
         Text("School Manager", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
         Text("Version 1.0")
