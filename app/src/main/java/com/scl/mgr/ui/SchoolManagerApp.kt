@@ -35,27 +35,30 @@ private data class DrawerItem(
 
 @Composable
 fun SchoolManagerApp(repository: SchoolRepository) {
-    val drawerState = rememberDrawerState(DrawerValue.Closed)
+    val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
 
-    val items = listOf(
-        DrawerItem("dashboard", "Dashboard", Icons.Default.Home),
-        DrawerItem("students", "Students", Icons.Default.School),
-        DrawerItem("teachers", "Teachers", Icons.Default.Person, true),
-        DrawerItem("classes", "Classes", Icons.Default.Class, true),
-        DrawerItem("subjects", "Subjects", Icons.Default.MenuBook, true),
-        DrawerItem("attendance", "Attendance", Icons.Default.CheckCircle, true),
-        DrawerItem("exams", "Exams & Results", Icons.Default.Assignment, true),
-        DrawerItem("fees", "Fees & Payments", Icons.Default.AccountBalanceWallet, true),
-        DrawerItem("notices", "Notices", Icons.Default.Notifications, true),
-        DrawerItem("events", "Events", Icons.Default.Event, true),
-        DrawerItem("reports", "Reports", Icons.Default.BarChart, true),
-        DrawerItem("settings", "Settings", Icons.Default.Settings, true),
-    )
+    val items = remember {
+        listOf(
+            DrawerItem("dashboard", "Dashboard", Icons.Default.Home),
+            DrawerItem("students", "Students", Icons.Default.School),
+            DrawerItem("teachers", "Teachers", Icons.Default.Person, true),
+            DrawerItem("classes", "Classes", Icons.Default.Class, true),
+            DrawerItem("subjects", "Subjects", Icons.Default.MenuBook, true),
+            DrawerItem("attendance", "Attendance", Icons.Default.CheckCircle, true),
+            DrawerItem("exams", "Exams & Results", Icons.Default.Assignment, true),
+            DrawerItem("fees", "Fees & Payments", Icons.Default.AccountBalanceWallet, true),
+            DrawerItem("notices", "Notices", Icons.Default.Notifications, true),
+            DrawerItem("events", "Events", Icons.Default.Event, true),
+            DrawerItem("reports", "Reports", Icons.Default.BarChart, true),
+            DrawerItem("settings", "Settings", Icons.Default.Settings, true),
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
+        gesturesEnabled = true,
         drawerContent = {
             ModalDrawerSheet(
                 modifier = Modifier.width(310.dp)
@@ -79,7 +82,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
                 HorizontalDivider(Modifier.padding(vertical = 12.dp))
 
                 LazyColumn(modifier = Modifier.fillMaxHeight()) {
-                    items(items) { item ->
+                    items(items, key = { it.route }) { item ->
                         NavigationDrawerItem(
                             label = {
                                 Row(verticalAlignment = Alignment.CenterVertically) {
