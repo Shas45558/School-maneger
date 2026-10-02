@@ -52,7 +52,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
             DrawerItem("notices", "Notices", Icons.Default.Notifications, true),
             DrawerItem("events", "Events", Icons.Default.Event, true),
             DrawerItem("reports", "Reports", Icons.Default.BarChart, true),
-            DrawerItem("settings", "Settings", Icons.Default.Settings, true),
+            DrawerItem("settings", "Settings", Icons.Default.Settings, true)
         )
     }
 
@@ -493,4 +493,67 @@ private fun StudentDetailsScreen(
                         Icon(
                             if (record.present) Icons.Default.CheckCircle else Icons.Default.Cancel,
                             contentDescription = null,
-                            tint = if (record.present) Color(0xFF2E7D32) else MaterialTheme.colorScheme.err
+                            tint = if (record.present) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
+                        )
+                    }
+                )
+            }
+        }
+    } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Text("Student not found.")
+    }
+
+    if (showDelete && student != null) {
+        AlertDialog(
+            onDismissRequest = { showDelete = false },
+            title = { Text("Delete student?") },
+            text = { Text("This will permanently remove the student and their attendance records from this device.") },
+            confirmButton = {
+                TextButton(onClick = {
+                    val s = student ?: return@TextButton
+                    scope.launch {
+                        repository.deleteStudent(s)
+                        showDelete = false
+                        onDeleted()
+                    }
+                }) { Text("Delete") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDelete = false }) { Text("Cancel") }
+            }
+        )
+    }
+}
+
+@Composable
+private fun DemoScreen(name: String) {
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(Icons.Default.Construction, null, modifier = Modifier.size(56.dp))
+            Spacer(Modifier.height(12.dp))
+            Text("$name is Demo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+            Text("This module will be added in a future version.")
+        }
+    }
+}
+
+@Composable
+private fun AboutScreen() {
+    Column(
+        Modifier.fillMaxSize().padding(24.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Image(
+            painter = painterResource(R.mipmap.ic_launcher),
+            contentDescription = null,
+            modifier = Modifier.size(100.dp).clip(CircleShape)
+        )
+        Spacer(Modifier.height(16.dp))
+        Text("School Manager", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Version 1.0")
+        Spacer(Modifier.height(8.dp))
+        Text("Offline student and attendance manager.")
+        Spacer(Modifier.height(20.dp))
+        Text("Package: com.scl.mgr", style = MaterialTheme.typography.bodySmall)
+    }
+}
