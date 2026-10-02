@@ -32,7 +32,15 @@ jobs:
         with:
           packages: 'platform-tools platforms;android-35 build-tools;35.0.0'
           accept-android-sdk-licenses: true
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
 
+      - name: Bootstrap Gradle wrapper
+        run: |
+         gradle wrapper --gradle-version 8.9
+         chmod +x ./gradlew
       - name: Prepare Gradle
         run: chmod +x ./gradlew
 
