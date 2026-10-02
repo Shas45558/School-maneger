@@ -54,9 +54,6 @@ fun SchoolManagerApp(repository: SchoolRepository) {
         DrawerItem("settings", "Settings", Icons.Default.Settings, true),
     )
 
-    // ModalNavigationDrawer or Scaffold layout goes here
-}
-
     ModalNavigationDrawer(
         drawerState = drawerState,
         drawerContent = {
