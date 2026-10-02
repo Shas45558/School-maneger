@@ -557,3 +557,4 @@ private fun AboutScreen() {
         Text("Package: com.scl.mgr", style = MaterialTheme.typography.bodySmall)
     }
 }
+
