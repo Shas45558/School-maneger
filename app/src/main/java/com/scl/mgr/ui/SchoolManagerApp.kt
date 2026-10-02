@@ -16,7 +16,6 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
 import androidx.navigation.NavType
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
@@ -24,6 +23,7 @@ import com.scl.mgr.R
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
 private data class DrawerItem(
@@ -81,53 +81,57 @@ fun SchoolManagerApp(repository: SchoolRepository) {
                 }
                 HorizontalDivider(Modifier.padding(vertical = 12.dp))
 
-                LazyColumn(modifier = Modifier.fillMaxHeight()) {
-                    items(items, key = { it.route }) { item ->
-                        NavigationDrawerItem(
-                            label = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    Text(item.label)
+                Column(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .padding(bottom = 16.dp)
+                ) {
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        items(items, key = { it.route }) { item ->
+                            NavigationDrawerItem(
+                                label = {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Text(item.label)
+                                        if (item.demo) {
+                                            Spacer(Modifier.width(8.dp))
+                                            AssistChip(
+                                                onClick = {},
+                                                label = { Text("Demo") },
+                                                enabled = false
+                                            )
+                                        }
+                                    }
+                                },
+                                icon = { Icon(item.icon, null) },
+                                selected = false,
+                                onClick = {
+                                    scope.launch { drawerState.close() }
                                     if (item.demo) {
-                                        Spacer(Modifier.width(8.dp))
-                                        AssistChip(
-                                            onClick = {},
-                                            label = { Text("Demo") },
-                                            enabled = false
-                                        )
+                                        navController.navigate("demo/${item.label}")
+                                    } else {
+                                        navController.navigate(item.route) {
+                                            popUpTo("dashboard") { saveState = true }
+                                            launchSingleTop = true
+                                            restoreState = true
+                                        }
                                     }
-                                }
-                            },
-                            icon = { Icon(item.icon, null) },
-                            selected = false,
-                            onClick = {
-                                scope.launch { drawerState.close() }
-                                if (item.demo) {
-                                    navController.navigate("demo/${item.label}")
-                                } else {
-                                    navController.navigate(item.route) {
-                                        popUpTo("dashboard") { saveState = true }
-                                        launchSingleTop = true
-                                        restoreState = true
-                                    }
-                                }
-                            },
-                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                        )
+                                },
+                                modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                            )
+                        }
                     }
 
-                    item {
-                        HorizontalDivider(Modifier.padding(vertical = 12.dp))
-                        NavigationDrawerItem(
-                            label = { Text("About") },
-                            icon = { Icon(Icons.Default.Info, null) },
-                            selected = false,
-                            onClick = {
-                                scope.launch { drawerState.close() }
-                                navController.navigate("about")
-                            },
-                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
-                        )
-                    }
+                    HorizontalDivider(Modifier.padding(vertical = 12.dp))
+                    NavigationDrawerItem(
+                        label = { Text("About") },
+                        icon = { Icon(Icons.Default.Info, null) },
+                        selected = false,
+                        onClick = {
+                            scope.launch { drawerState.close() }
+                            navController.navigate("about")
+                        },
+                        modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                    )
                 }
             }
         }
@@ -204,7 +208,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
 private fun AppScaffold(
     title: String,
     drawerState: DrawerState,
-    scope: kotlinx.coroutines.CoroutineScope,
+    scope: CoroutineScope,
     content: @Composable () -> Unit
 ) {
     Scaffold(
@@ -257,37 +261,41 @@ private fun StudentsScreen(
     var query by remember { mutableStateOf("") }
     val students by repository.students(query).collectAsState(initial = emptyList())
 
-    Column(Modifier.fillMaxSize()) {
-        OutlinedTextField(
-            value = query,
-            onValueChange = { query = it },
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            label = { Text("Search students") },
-            leadingIcon = { Icon(Icons.Default.Search, null) },
-            singleLine = true
-        )
+    Box(Modifier.fillMaxSize()) {
+        Column(Modifier.fillMaxSize()) {
+            OutlinedTextField(
+                value = query,
+                onValueChange = { query = it },
+                modifier = Modifier.fillMaxWidth().padding(16.dp),
+                label = { Text("Search students") },
+                leadingIcon = { Icon(Icons.Default.Search, null) },
+                singleLine = true
+            )
 
-        if (students.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                Text(if (query.isBlank()) "No students yet." else "No students found.")
-            }
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(students, key = { it.id }) { student ->
-                    StudentCard(student, onClick = { onOpen(student.id) })
+            if (students.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                    Text(if (query.isBlank()) "No students yet." else "No students found.")
+                }
+            } else {
+                LazyColumn(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    items(students, key = { it.id }) { student ->
+                        StudentCard(student, onClick = { onOpen(student.id) })
+                    }
                 }
             }
         }
-    }
 
-    FloatingActionButton(
-        onClick = onAdd,
-        modifier = Modifier.padding(20.dp)
-    ) {
-        Icon(Icons.Default.Add, contentDescription = "Add student")
+        FloatingActionButton(
+            onClick = onAdd,
+            modifier = Modifier
+                .align(Alignment.BottomEnd)
+                .padding(20.dp)
+        ) {
+            Icon(Icons.Default.Add, contentDescription = "Add student")
+        }
     }
 }
 
@@ -485,67 +493,4 @@ private fun StudentDetailsScreen(
                         Icon(
                             if (record.present) Icons.Default.CheckCircle else Icons.Default.Cancel,
                             contentDescription = null,
-                            tint = if (record.present) Color(0xFF2E7D32) else MaterialTheme.colorScheme.error
-                        )
-                    }
-                )
-            }
-        }
-    } ?: Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Text("Student not found.")
-    }
-
-    if (showDelete && student != null) {
-        AlertDialog(
-            onDismissRequest = { showDelete = false },
-            title = { Text("Delete student?") },
-            text = { Text("This will permanently remove the student and their attendance records from this device.") },
-            confirmButton = {
-                TextButton(onClick = {
-                    val s = student ?: return@TextButton
-                    scope.launch {
-                        repository.deleteStudent(s)
-                        showDelete = false
-                        onDeleted()
-                    }
-                }) { Text("Delete") }
-            },
-            dismissButton = {
-                TextButton(onClick = { showDelete = false }) { Text("Cancel") }
-            }
-        )
-    }
-}
-
-@Composable
-private fun DemoScreen(name: String) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Construction, null, modifier = Modifier.size(56.dp))
-            Spacer(Modifier.height(12.dp))
-            Text("$name is Demo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-            Text("This module will be added in a future version.")
-        }
-    }
-}
-
-@Composable
-private fun AboutScreen() {
-    Column(
-        Modifier.fillMaxSize().padding(24.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Image(
-            painter = painterResource(R.mipmap.ic_launcher),
-            contentDescription = null,
-            modifier = Modifier.size(100.dp).clip(CircleShape)
-        )
-        Spacer(Modifier.height(16.dp))
-        Text("School Manager", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Version 1.0")
-        Spacer(Modifier.height(8.dp))
-        Text("Offline student and attendance manager.")
-        Spacer(Modifier.height(20.dp))
-        Text("Package: com.scl.mgr", style = MaterialTheme.typography.bodySmall)
-    }
-}
+                            tint = if (record.present) Color(0xFF2E7D32) else MaterialTheme.colorScheme.err
