@@ -49,3 +49,19 @@ Push this project to GitHub. The workflow at `.github/workflows/build.yml` build
 ## App icon
 
 The launcher icon is generated from the supplied `sm.png`.
+
+
+## GitHub Release APK
+
+The GitHub Actions workflow builds a **signed release APK** and replaces the GitHub Release tagged `release` on every push to `main` or `master`.
+
+### Required GitHub repository secrets
+
+Add these four secrets under **Settings → Secrets and variables → Actions**:
+
+- `RELEASE_KEYSTORE_BASE64` — your release `.jks` file encoded with Base64
+- `RELEASE_STORE_PASSWORD` — keystore password
+- `RELEASE_KEY_ALIAS` — key alias
+- `RELEASE_KEY_PASSWORD` — key password
+
+The keystore is intentionally not stored in the repository. Keep a secure backup because the same signing key should be used for future updates of the app.
