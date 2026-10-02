@@ -102,7 +102,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
                                         }
                                     }
                                 },
-                                icon = { Icon(item.icon, null) },
+                                icon = { Icon(item.icon, contentDescription = null) },
                                 selected = false,
                                 onClick = {
                                     scope.launch { drawerState.close() }
@@ -124,7 +124,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
                     HorizontalDivider(Modifier.padding(vertical = 12.dp))
                     NavigationDrawerItem(
                         label = { Text("About") },
-                        icon = { Icon(Icons.Default.Info, null) },
+                        icon = { Icon(Icons.Default.Info, contentDescription = null) },
                         selected = false,
                         onClick = {
                             scope.launch { drawerState.close() }
@@ -268,7 +268,7 @@ private fun StudentsScreen(
                 onValueChange = { query = it },
                 modifier = Modifier.fillMaxWidth().padding(16.dp),
                 label = { Text("Search students") },
-                leadingIcon = { Icon(Icons.Default.Search, null) },
+                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
                 singleLine = true
             )
 
@@ -444,7 +444,7 @@ private fun StudentDetailsScreen(
 
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
-                        Icon(Icons.Default.Edit, null)
+                        Icon(Icons.Default.Edit, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Edit")
                     }
@@ -453,7 +453,7 @@ private fun StudentDetailsScreen(
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error)
                     ) {
-                        Icon(Icons.Default.Delete, null)
+                        Icon(Icons.Default.Delete, contentDescription = null)
                         Spacer(Modifier.width(6.dp))
                         Text("Delete")
                     }
@@ -529,7 +529,7 @@ private fun StudentDetailsScreen(
 private fun DemoScreen(name: String) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            Icon(Icons.Default.Construction, null, modifier = Modifier.size(56.dp))
+            Icon(Icons.Default.Construction, contentDescription = null, modifier = Modifier.size(56.dp))
             Spacer(Modifier.height(12.dp))
             Text("$name is Demo", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
             Text("This module will be added in a future version.")
