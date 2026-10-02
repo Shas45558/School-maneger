@@ -24,6 +24,7 @@ import com.scl.mgr.R
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
+import kotlinx.coroutines.launch
 
 private data class DrawerItem(
     val route: String,
@@ -52,6 +53,9 @@ fun SchoolManagerApp(repository: SchoolRepository) {
         DrawerItem("reports", "Reports", Icons.Default.BarChart, true),
         DrawerItem("settings", "Settings", Icons.Default.Settings, true),
     )
+
+    // ModalNavigationDrawer or Scaffold layout goes here
+}
 
     ModalNavigationDrawer(
         drawerState = drawerState,
