@@ -803,7 +803,7 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 supportingContent = { Text("Connected") }
             )
             Button(
-                onClick = { account?.let(::startSync) },
+                onClick = { account?.let { startSync?.invoke(it) } },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()
             ) {
