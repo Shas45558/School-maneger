@@ -716,13 +716,28 @@ private fun StudentDetailsScreen(
 @Composable
 private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
     val context = LocalContext.current
-    val activity = context as? Activity
     val scope = rememberCoroutineScope()
     var account by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context)) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
 
-    fun startSync(selected: com.google.android.gms.auth.api.signin.GoogleSignInAccount) {
+    var startSync: ((com.google.android.gms.auth.api.signin.GoogleSignInAccount) -> Unit)? = null
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        try {
+            val selected = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                .getResult(ApiException::class.java)
+            startSync?.invoke(selected)
+        } catch (e: ApiException) {
+            status = "Google sign-in failed: statusCode=${e.statusCode}, message=${e.message ?: "none"}"
+        } catch (e: Exception) {
+            status = "Google sign-in failed: ${e.message ?: e.javaClass.simpleName}"
+        }
+    }
+
+    startSync = { selected ->
         account = selected
         busy = true
         status = "Checking Google Drive backup…"
@@ -735,8 +750,8 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                     "No School Manager backup was found. Current database was uploaded to Google Drive."
                 }
             } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
-                status = "Google Drive permission is required."
-                activity?.startActivityForResult(e.recoveryIntent, 9042)
+                status = "Google Drive permission is required. Opening Google authorization…"
+                signInLauncher.launch(e.recoveryIntent)
             } catch (e: Exception) {
                 status = "Sync failed: ${e.message ?: "Unknown error"}"
             } finally {
@@ -745,20 +760,8 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         }
     }
 
-    val signInLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        try {
-            val selected = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-                .getResult(ApiException::class.java)
-            startSync(selected)
-        } catch (e: Exception) {
-            status = "Google sign-in was cancelled or failed."
-        }
-    }
-
     LaunchedEffect(Unit) {
-        account?.let { startSync(it) }
+        account?.let { startSync?.invoke(it) }
     }
 
     val signInClient = remember(context) {
