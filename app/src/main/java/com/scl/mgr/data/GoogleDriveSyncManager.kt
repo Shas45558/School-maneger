@@ -72,7 +72,9 @@ class GoogleDriveSyncManager(
         return try {
             GoogleAuthUtil.getToken(context, accountObj, "oauth2:$APP_DATA_SCOPE")
         } catch (e: UserRecoverableAuthException) {
-            throw DriveAuthorizationRequiredException(e.intent)
+            val recoveryIntent = e.intent
+                ?: error("Google authentication recovery intent is unavailable")
+            throw DriveAuthorizationRequiredException(recoveryIntent)
         }
     }
 
