@@ -1,5 +1,8 @@
 package com.scl.mgr.ui
 
+import android.app.Activity
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -18,6 +21,11 @@ import androidx.navigation.NavType
 import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
+import com.google.android.gms.auth.api.signin.GoogleSignIn
+import com.google.android.gms.auth.api.signin.GoogleSignInOptions
+import com.google.android.gms.common.api.ApiException
+import com.google.android.gms.common.api.Scope
+import com.scl.mgr.data.GoogleDriveSyncManager
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
@@ -36,7 +44,7 @@ private data class DrawerItem(
 private const val PREFS = "student_form_defaults"
 
 @Composable
-fun SchoolManagerApp(repository: SchoolRepository) {
+fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncManager) {
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
@@ -54,7 +62,7 @@ fun SchoolManagerApp(repository: SchoolRepository) {
             DrawerItem("notices", "Notices", Icons.Default.Notifications, true),
             DrawerItem("events", "Events", Icons.Default.Event, true),
             DrawerItem("reports", "Reports", Icons.Default.BarChart, true),
-            DrawerItem("settings", "Settings", Icons.Default.Settings, true)
+            DrawerItem("settings", "Google Drive", Icons.Default.Cloud, false)
         )
     }
 
@@ -198,6 +206,11 @@ fun SchoolManagerApp(repository: SchoolRepository) {
             composable("demo/{name}") { backStack ->
                 val name = backStack.arguments?.getString("name") ?: "Feature"
                 AppScaffold(name, drawerState, scope) { DemoScreen(name) }
+            }
+            composable("settings") {
+                AppScaffold("Google Drive", drawerState, scope) {
+                    GoogleDriveScreen(syncManager)
+                }
             }
             composable("about") {
                 AppScaffold("About", drawerState, scope) { AboutScreen() }
@@ -696,6 +709,122 @@ private fun StudentDetailsScreen(
             },
             dismissButton = { TextButton(onClick = { showDelete = false }) { Text("Cancel") } }
         )
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
+    val context = LocalContext.current
+    val activity = context as? Activity
+    val scope = rememberCoroutineScope()
+    var account by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context)) }
+    var status by remember { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+
+    fun startSync(selected: com.google.android.gms.auth.api.signin.GoogleSignInAccount) {
+        account = selected
+        busy = true
+        status = "Checking Google Drive backup…"
+        scope.launch {
+            try {
+                val result = syncManager.sync(selected)
+                status = if (result.restored) {
+                    "Drive backup merged. Added ${result.studentsAdded} student(s) and ${result.attendanceAdded} attendance record(s)."
+                } else {
+                    "No School Manager backup was found. Current database was uploaded to Google Drive."
+                }
+            } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
+                status = "Google Drive permission is required."
+                activity?.startActivityForResult(e.recoveryIntent, 9042)
+            } catch (e: Exception) {
+                status = "Sync failed: ${e.message ?: "Unknown error"}"
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    val signInLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        try {
+            val selected = GoogleSignIn.getSignedInAccountFromIntent(result.data)
+                .getResult(ApiException::class.java)
+            startSync(selected)
+        } catch (e: Exception) {
+            status = "Google sign-in was cancelled or failed."
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        account?.let { startSync(it) }
+    }
+
+    val signInClient = remember(context) {
+        GoogleSignIn.getClient(
+            context,
+            GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+                .requestEmail()
+                .requestScopes(Scope(GoogleDriveSyncManager.APP_DATA_SCOPE))
+                .build()
+        )
+    }
+
+    Column(
+        Modifier.fillMaxSize().padding(20.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
+    ) {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Google Drive Backup", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Connect a Gmail/Google account. School Manager stores its database in that account's private Drive app-data area.")
+                Text("Your normal student and attendance data stays offline on the phone.", style = MaterialTheme.typography.bodySmall)
+            }
+        }
+
+        if (account == null) {
+            Button(
+                onClick = { signInLauncher.launch(signInClient.signInIntent) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.AccountCircle, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text("Connect Gmail / Google account")
+            }
+        } else {
+            ListItem(
+                leadingContent = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
+                headlineContent = { Text(account?.email ?: account?.account?.name.orEmpty()) },
+                supportingContent = { Text("Connected") }
+            )
+            Button(
+                onClick = { account?.let(::startSync) },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Icon(Icons.Default.Sync, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(if (busy) "Syncing…" else "Sync now")
+            }
+            OutlinedButton(
+                onClick = {
+                    signInClient.signOut()
+                    account = null
+                    status = "Google account disconnected from this app. The Drive backup was not deleted."
+                },
+                enabled = !busy,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Disconnect") }
+        }
+
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+        status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
+
+        HorizontalDivider()
+        Text("Merge behavior", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("• If no backup exists, the current database is uploaded.\n• If a backup exists, students are merged using Class + Section + Roll.\n• Existing local student details are kept when the same student exists on both sides.\n• Attendance is merged by Student + Date.\n• The merged database is uploaded back to Drive.")
     }
 }
 

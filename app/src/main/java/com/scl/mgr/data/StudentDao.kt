@@ -25,6 +25,9 @@ interface StudentDao {
     @Query("SELECT * FROM students WHERE className = :className AND section = :section AND studentId = :studentId LIMIT 1")
     suspend fun findDuplicate(className: String, section: String, studentId: String): Student?
 
+    @Query("SELECT * FROM students ORDER BY id")
+    suspend fun getAllOnce(): List<Student>
+
     @Insert
     suspend fun insert(student: Student): Long
 

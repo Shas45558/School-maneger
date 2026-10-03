@@ -11,6 +11,9 @@ interface AttendanceDao {
     @Query("SELECT * FROM attendance WHERE studentId = :studentId AND date = :date LIMIT 1")
     suspend fun get(studentId: Long, date: String): Attendance?
 
+    @Query("SELECT * FROM attendance ORDER BY id")
+    suspend fun getAllOnce(): List<Attendance>
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsert(attendance: Attendance)
 
