@@ -21,6 +21,8 @@ import androidx.navigation.navArgument
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
+import java.time.YearMonth
+import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -230,19 +232,91 @@ private fun AppScaffold(
     }
 }
 
+private data class AttendanceGroupSummary(
+    val className: String,
+    val section: String,
+    val total: Int,
+    val present: Int,
+    val absent: Int
+)
+
 @Composable
 private fun DashboardScreen(repository: SchoolRepository, onStudents: () -> Unit) {
-    val count by repository.studentCount().collectAsState(initial = 0)
-    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    val students by repository.students("").collectAsState(initial = emptyList())
+    val totalStudents = students.size
+    var present by remember { mutableStateOf(0) }
+    var absent by remember { mutableStateOf(0) }
+    var showAttendanceDetails by remember { mutableStateOf(false) }
+    var groups by remember { mutableStateOf(emptyList<AttendanceGroupSummary>()) }
+    val today = remember { LocalDate.now().toString() }
+
+    LaunchedEffect(students, today) {
+        present = repository.presentCount(today)
+        absent = repository.absentCount(today)
+        val result = students.groupBy { it.className to it.section }.map { (key, groupStudents) ->
+            var p = 0
+            var a = 0
+            groupStudents.forEach { student ->
+                repository.attendanceForDate(student.id, today)?.let { if (it.present) p++ else a++ }
+            }
+            AttendanceGroupSummary(key.first, key.second, groupStudents.size, p, a)
+        }.sortedWith(compareBy({ it.className.toIntOrNull() ?: 999 }, { it.section }))
+        groups = result
+    }
+
+    Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Welcome to School Manager", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+
         Card(onClick = onStudents, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp)) {
-                Text("Students", style = MaterialTheme.typography.titleMedium)
-                Text("$count", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
+                Text("Total Students", style = MaterialTheme.typography.titleMedium)
+                Text("$totalStudents", style = MaterialTheme.typography.displaySmall, fontWeight = FontWeight.Bold)
                 Text("Manage students and attendance")
             }
         }
-        Text("Offline mode", style = MaterialTheme.typography.bodyMedium)
+
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+            AttendanceCountCard("Present", present, Icons.Default.CheckCircle, Modifier.weight(1f)) { showAttendanceDetails = true }
+            AttendanceCountCard("Absent", absent, Icons.Default.Cancel, Modifier.weight(1f)) { showAttendanceDetails = true }
+        }
+        Text("Today: $today", style = MaterialTheme.typography.bodySmall)
+    }
+
+    if (showAttendanceDetails) {
+        AlertDialog(
+            onDismissRequest = { showAttendanceDetails = false },
+            title = { Text("Today's attendance by class & section") },
+            text = {
+                if (groups.isEmpty()) {
+                    Text("No students available.")
+                } else {
+                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        items(groups, key = { "${it.className}-${it.section}" }) { group ->
+                            Card(Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text("Class ${group.className} • Section ${group.section}", fontWeight = FontWeight.Bold)
+                                    Text("Total: ${group.total}")
+                                    Text("Present: ${group.present}    Absent: ${group.absent}")
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            confirmButton = { TextButton(onClick = { showAttendanceDetails = false }) { Text("Close") } }
+        )
+    }
+}
+
+@Composable
+private fun AttendanceCountCard(title: String, count: Int, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
+    Card(onClick = onClick, modifier = modifier) {
+        Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            Icon(icon, contentDescription = null, modifier = Modifier.size(30.dp))
+            Spacer(Modifier.height(6.dp))
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text("$count", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        }
     }
 }
 
@@ -396,7 +470,7 @@ private fun StudentFormScreen(repository: SchoolRepository, studentId: Long?, on
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun DropdownField(label: String, value: String, options: List<String>, onSelected: (String) -> Unit) {
+private fun DropdownField(label: String, value: String, options: List<String>, modifier: Modifier = Modifier, onSelected: (String) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
         OutlinedTextField(
@@ -405,7 +479,7 @@ private fun DropdownField(label: String, value: String, options: List<String>, o
             readOnly = true,
             label = { Text(label) },
             trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded) },
-            modifier = Modifier.fillMaxWidth().menuAnchor()
+            modifier = modifier.fillMaxWidth().menuAnchor()
         )
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             options.forEach { option ->
@@ -432,80 +506,96 @@ private fun FormField(label: String, value: String, minLines: Int = 1, onValueCh
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun AttendanceScreen(repository: SchoolRepository) {
-    val students by repository.students("").collectAsState(initial = emptyList())
+    val allStudents by repository.students("").collectAsState(initial = emptyList())
+    var selectedClass by remember { mutableStateOf("All") }
+    var selectedSection by remember { mutableStateOf("All") }
     var date by remember { mutableStateOf(LocalDate.now().toString()) }
+    var month by remember { mutableStateOf(YearMonth.now()) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var tab by remember { mutableIntStateOf(0) }
     var statuses by remember { mutableStateOf<Map<Long, Boolean?>>(emptyMap()) }
     val scope = rememberCoroutineScope()
 
-    LaunchedEffect(date, students) {
+    val classOptions = remember(allStudents) { listOf("All") + allStudents.map { it.className }.distinct().sortedWith(compareBy { it.toIntOrNull() ?: 999 }) }
+    val sectionOptions = remember(allStudents, selectedClass) {
+        listOf("All") + allStudents.filter { selectedClass == "All" || it.className == selectedClass }.map { it.section }.distinct().sorted()
+    }
+    val filteredStudents = remember(allStudents, selectedClass, selectedSection) {
+        allStudents.filter {
+            (selectedClass == "All" || it.className == selectedClass) &&
+            (selectedSection == "All" || it.section == selectedSection)
+        }
+    }
+
+    LaunchedEffect(date, filteredStudents) {
         val loaded = mutableMapOf<Long, Boolean?>()
-        students.forEach { student -> loaded[student.id] = repository.attendanceForDate(student.id, date)?.present }
+        filteredStudents.forEach { student -> loaded[student.id] = repository.attendanceForDate(student.id, date)?.present }
         statuses = loaded
     }
 
     Column(Modifier.fillMaxSize()) {
-        Row(
-            Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            OutlinedTextField(
-                value = date,
-                onValueChange = { date = it },
-                label = { Text("Date (YYYY-MM-DD)") },
-                modifier = Modifier.weight(1f),
-                singleLine = true
-            )
-            IconButton(onClick = { showDatePicker = true }) {
-                Icon(Icons.Default.DateRange, contentDescription = "Choose date")
-            }
+        TabRow(selectedTabIndex = tab) {
+            Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Mark Attendance") })
+            Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Monthly View") })
         }
 
-        if (students.isEmpty()) {
-            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("Add students first.") }
-        } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxSize(),
-                contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                items(students, key = { it.id }) { student ->
-                    val status = statuses[student.id]
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(student.studentName, fontWeight = FontWeight.Bold)
-                            Text("Roll ${student.studentId} • Class ${student.className}-${student.section}")
-                            Spacer(Modifier.height(8.dp))
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
-                                    onClick = {
-                                        scope.launch {
-                                            repository.markAttendance(student.id, date, true)
-                                            statuses = statuses + (student.id to true)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f),
-                                    colors = if (status == true) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant)
-                                ) { Text("Present") }
-                                OutlinedButton(
-                                    onClick = {
-                                        scope.launch {
-                                            repository.markAttendance(student.id, date, false)
-                                            statuses = statuses + (student.id to false)
-                                        }
-                                    },
-                                    modifier = Modifier.weight(1f)
-                                ) { Text("Absent") }
-                            }
-                            if (status != null) {
-                                Text(
-                                    if (status) "Marked Present" else "Marked Absent",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    modifier = Modifier.padding(top = 6.dp)
-                                )
+        Row(Modifier.fillMaxWidth().padding(12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            DropdownField("Class", selectedClass, classOptions, Modifier.weight(1f)) {
+                selectedClass = it
+                selectedSection = "All"
+            }
+            DropdownField("Section", selectedSection, sectionOptions, Modifier.weight(1f)) { selectedSection = it }
+        }
+
+        if (tab == 0) {
+            Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(value = date, onValueChange = { date = it }, label = { Text("Date (YYYY-MM-DD)") }, modifier = Modifier.weight(1f), singleLine = true)
+                IconButton(onClick = { showDatePicker = true }) { Icon(Icons.Default.DateRange, contentDescription = "Choose date") }
+            }
+            if (filteredStudents.isEmpty()) {
+                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { Text("No students in this class/section.") }
+            } else {
+                LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    items(filteredStudents, key = { it.id }) { student ->
+                        val status = statuses[student.id]
+                        Card(Modifier.fillMaxWidth()) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(student.studentName, fontWeight = FontWeight.Bold)
+                                Text("Roll ${student.studentId} • Class ${student.className}-${student.section}")
+                                Spacer(Modifier.height(8.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Button(onClick = { scope.launch { repository.markAttendance(student.id, date, true); statuses = statuses + (student.id to true) } }, modifier = Modifier.weight(1f), colors = if (status == true) ButtonDefaults.buttonColors() else ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurfaceVariant)) { Text("Present") }
+                                    OutlinedButton(onClick = { scope.launch { repository.markAttendance(student.id, date, false); statuses = statuses + (student.id to false) } }, modifier = Modifier.weight(1f)) { Text("Absent") }
+                                }
                             }
                         }
+                    }
+                }
+            }
+        } else {
+            val start = month.atDay(1).toString()
+            val end = month.atEndOfMonth().toString()
+            LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                item {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                        IconButton(onClick = { month = month.minusMonths(1) }) { Icon(Icons.Default.ChevronLeft, contentDescription = "Previous month") }
+                        Text(month.format(DateTimeFormatter.ofPattern("MMMM yyyy")), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                        IconButton(onClick = { month = month.plusMonths(1) }) { Icon(Icons.Default.ChevronRight, contentDescription = "Next month") }
+                    }
+                }
+                items(filteredStudents, key = { "month-${it.id}" }) { student ->
+                    var p by remember(student.id, start, end) { mutableIntStateOf(0) }
+                    var a by remember(student.id, start, end) { mutableIntStateOf(0) }
+                    LaunchedEffect(student.id, start, end) {
+                        p = repository.studentPresentCountBetween(student.id, start, end)
+                        a = repository.studentAbsentCountBetween(student.id, start, end)
+                    }
+                    Card(Modifier.fillMaxWidth()) {
+                        ListItem(
+                            headlineContent = { Text(student.studentName, fontWeight = FontWeight.Bold) },
+                            supportingContent = { Text("Roll ${student.studentId} • Class ${student.className}-${student.section}") },
+                            trailingContent = { Text("P $p  •  A $a", fontWeight = FontWeight.Bold) }
+                        )
                     }
                 }
             }
@@ -514,18 +604,9 @@ private fun AttendanceScreen(repository: SchoolRepository) {
 
     if (showDatePicker) {
         val pickerState = rememberDatePickerState()
-        DatePickerDialog(
-            onDismissRequest = { showDatePicker = false },
-            confirmButton = {
-                TextButton(onClick = {
-                    pickerState.selectedDateMillis?.let { millis ->
-                        date = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
-                    }
-                    showDatePicker = false
-                }) { Text("OK") }
-            },
-            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
-        ) { DatePicker(state = pickerState) }
+        DatePickerDialog(onDismissRequest = { showDatePicker = false }, confirmButton = {
+            TextButton(onClick = { pickerState.selectedDateMillis?.let { millis -> date = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString() }; showDatePicker = false }) { Text("OK") }
+        }, dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }) { DatePicker(state = pickerState) }
     }
 }
 
@@ -636,7 +717,7 @@ private fun AboutScreen() {
         }
         Spacer(Modifier.height(16.dp))
         Text("School Manager", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Version 1.1")
+        Text("Version 1.2")
         Spacer(Modifier.height(8.dp))
         Text("Offline student and attendance manager.")
         Spacer(Modifier.height(20.dp))

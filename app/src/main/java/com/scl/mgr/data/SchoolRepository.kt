@@ -37,4 +37,9 @@ class SchoolRepository(private val db: AppDatabase) {
     }
 
     suspend fun presentCount(date: String): Int = db.attendanceDao().presentCount(date)
+    suspend fun absentCount(date: String): Int = db.attendanceDao().absentCount(date)
+    suspend fun presentCountBetween(startDate: String, endDate: String): Int = db.attendanceDao().presentCountBetween(startDate, endDate)
+    suspend fun absentCountBetween(startDate: String, endDate: String): Int = db.attendanceDao().absentCountBetween(startDate, endDate)
+    suspend fun studentPresentCountBetween(studentId: Long, startDate: String, endDate: String): Int = db.attendanceDao().studentPresentCountBetween(studentId, startDate, endDate)
+    suspend fun studentAbsentCountBetween(studentId: Long, startDate: String, endDate: String): Int = db.attendanceDao().studentAbsentCountBetween(studentId, startDate, endDate)
 }
