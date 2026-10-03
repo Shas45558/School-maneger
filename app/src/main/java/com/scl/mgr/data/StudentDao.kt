@@ -5,7 +5,7 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface StudentDao {
-    @Query("SELECT * FROM students ORDER BY studentName COLLATE NOCASE")
+    @Query("SELECT * FROM students ORDER BY className, section, studentId, studentName COLLATE NOCASE")
     fun observeAll(): Flow<List<Student>>
 
     @Query("""
@@ -14,12 +14,16 @@ interface StudentDao {
            OR studentId LIKE '%' || :query || '%'
            OR className LIKE '%' || :query || '%'
            OR section LIKE '%' || :query || '%'
-        ORDER BY studentName COLLATE NOCASE
+           OR fatherName LIKE '%' || :query || '%'
+        ORDER BY className, section, studentId, studentName COLLATE NOCASE
     """)
     fun search(query: String): Flow<List<Student>>
 
     @Query("SELECT * FROM students WHERE id = :id LIMIT 1")
     suspend fun getById(id: Long): Student?
+
+    @Query("SELECT * FROM students WHERE className = :className AND section = :section AND studentId = :studentId LIMIT 1")
+    suspend fun findDuplicate(className: String, section: String, studentId: String): Student?
 
     @Insert
     suspend fun insert(student: Student): Long

@@ -13,8 +13,20 @@ android {
         applicationId = "com.scl.mgr"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
+    }
+
+    // Release is optimized to reduce the final APK size.
+    buildTypes {
+        getByName("release") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+        }
     }
 
     // Release signing is supplied by GitHub Actions through environment variables.
@@ -34,10 +46,8 @@ android {
                 keyPassword = releaseKeyPassword
             }
         }
-        buildTypes {
-            getByName("release") {
-                signingConfig = signingConfigs.getByName("release")
-            }
+        buildTypes.getByName("release") {
+            signingConfig = signingConfigs.getByName("release")
         }
     }
 

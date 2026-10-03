@@ -10,7 +10,9 @@ data class Student(
     val studentId: String,
     val className: String,
     val section: String,
-    val fatherName: String,
-    val address: String,
-    val mobileNumber: String
+    val gender: String = "",
+    val religion: String = "",
+    val fatherName: String = "",
+    val address: String = "",
+    val mobileNumber: String = ""
 )

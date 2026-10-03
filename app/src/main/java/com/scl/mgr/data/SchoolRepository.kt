@@ -8,8 +8,15 @@ class SchoolRepository(private val db: AppDatabase) {
 
     fun studentCount(): Flow<Int> = db.studentDao().observeCount()
 
-    suspend fun addStudent(student: Student) = db.studentDao().insert(student)
+    suspend fun addStudent(student: Student): Long {
+        if (db.studentDao().findDuplicate(student.className, student.section, student.studentId) != null) {
+            throw IllegalArgumentException("A student with the same class, section and roll already exists.")
+        }
+        return db.studentDao().insert(student)
+    }
+
     suspend fun updateStudent(student: Student) = db.studentDao().update(student)
+
     suspend fun deleteStudent(student: Student) {
         db.attendanceDao().deleteForStudent(student.id)
         db.studentDao().delete(student)
@@ -17,12 +24,17 @@ class SchoolRepository(private val db: AppDatabase) {
 
     suspend fun getStudent(id: Long): Student? = db.studentDao().getById(id)
 
-    fun attendance(studentId: Long): Flow<List<Attendance>> =
-        db.attendanceDao().observeForStudent(studentId)
+    suspend fun duplicateExists(student: Student): Boolean =
+        db.studentDao().findDuplicate(student.className, student.section, student.studentId)?.let { it.id != student.id } ?: false
+
+    fun attendance(studentId: Long): Flow<List<Attendance>> = db.attendanceDao().observeForStudent(studentId)
+
+    suspend fun attendanceForDate(studentId: Long, date: String): Attendance? =
+        db.attendanceDao().get(studentId, date)
 
     suspend fun markAttendance(studentId: Long, date: String, present: Boolean) {
-        db.attendanceDao().upsert(
-            Attendance(studentId = studentId, date = date, present = present)
-        )
+        db.attendanceDao().upsert(Attendance(studentId = studentId, date = date, present = present))
     }
+
+    suspend fun presentCount(date: String): Int = db.attendanceDao().presentCount(date)
 }
