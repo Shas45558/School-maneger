@@ -14,7 +14,10 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
     suspend fun createSnapshot(): File = withContext(Dispatchers.IO) {
         val out = File(context.cacheDir, "school_manager_backup.db")
         if (out.exists()) out.delete()
-        db.openHelper.writableDatabase.execSQL("PRAGMA wal_checkpoint(FULL)")
+        // wal_checkpoint returns a result set, so execute it as a query.
+        db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { cursor ->
+            while (cursor.moveToNext()) { /* consume result */ }
+        }
         val escaped = out.absolutePath.replace("'", "''")
         db.openHelper.writableDatabase.execSQL("VACUUM INTO '$escaped'")
         out
