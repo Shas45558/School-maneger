@@ -10,7 +10,6 @@ import com.scl.mgr.data.AppDatabase
 import com.scl.mgr.data.BackupManager
 import com.scl.mgr.data.GoogleDriveSyncManager
 import com.scl.mgr.data.SchoolRepository
-import com.scl.mgr.ui.SchoolManagerApp
 import com.scl.mgr.ui.theme.SchoolManagerTheme
 
 class MainActivity : ComponentActivity() {
