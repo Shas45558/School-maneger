@@ -28,6 +28,7 @@ import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.scl.mgr.data.BackupCrypto
 import com.scl.mgr.data.GoogleDriveSyncManager
+import com.scl.mgr.data.RememberedBackupPassword
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
@@ -724,6 +725,8 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
     var busy by remember { mutableStateOf(false) }
     var showBackupPassword by remember { mutableStateOf(false) }
     var backupPasswordInput by remember { mutableStateOf("") }
+    var rememberPassword by remember { mutableStateOf(false) }
+    val rememberedPasswordStore = remember(context) { RememberedBackupPassword(context) }
     var pendingAccount by remember {
         mutableStateOf<com.google.android.gms.auth.api.signin.GoogleSignInAccount?>(null)
     }
@@ -736,8 +739,14 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 .getResult(ApiException::class.java)
             account = selected
             pendingAccount = selected
-            backupPasswordInput = ""
-            showBackupPassword = true
+            val remembered = rememberedPasswordStore.read()
+            rememberPassword = remembered != null
+            if (remembered != null) {
+                performSync(selected, remembered)
+            } else {
+                backupPasswordInput = ""
+                showBackupPassword = true
+            }
         } catch (e: ApiException) {
             status = "Google sign-in failed: statusCode=${e.statusCode}, message=${e.message ?: "none"}"
         } catch (e: Exception) {
@@ -754,12 +763,20 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         scope.launch {
             try {
                 val result = syncManager.sync(selected, password.toCharArray())
+                if (rememberPassword) {
+                    rememberedPasswordStore.save(password)
+                } else {
+                    rememberedPasswordStore.clear()
+                }
                 status = if (result.restored) {
                     "Drive backup merged. Added ${result.studentsAdded} student(s) and ${result.attendanceAdded} attendance record(s)."
                 } else {
                     "No backup found. The current database was encrypted and uploaded to Google Drive."
                 }
             } catch (e: BackupCrypto.InvalidBackupException) {
+                rememberedPasswordStore.clear()
+                rememberPassword = false
+                backupPasswordInput = ""
                 status = e.message ?: "Backup password is incorrect or the backup is damaged."
             } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
                 status = "Google Drive permission is required. Opening Google authorization…"
@@ -787,8 +804,19 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                         visualTransformation = PasswordVisualTransformation(),
                         enabled = !busy
                     )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Checkbox(
+                            checked = rememberPassword,
+                            onCheckedChange = { rememberPassword = it },
+                            enabled = !busy
+                        )
+                        Text("Remember me on this device")
+                    }
                     Text(
-                        "At least 8 characters. The app does not save the password. You need the same password on a new phone.",
+                        "If enabled, the password is stored encrypted with Android Keystore. Future syncs on this device will not ask for it again.",
                         style = MaterialTheme.typography.bodySmall
                     )
                 }
@@ -859,8 +887,15 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 onClick = {
                     val selected = account ?: return@Button
                     pendingAccount = selected
-                    backupPasswordInput = ""
-                    showBackupPassword = true
+                    val remembered = rememberedPasswordStore.read()
+                    if (remembered != null) {
+                        rememberPassword = true
+                        performSync(selected, remembered)
+                    } else {
+                        rememberPassword = false
+                        backupPasswordInput = ""
+                        showBackupPassword = true
+                    }
                 },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()

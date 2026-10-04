@@ -35,3 +35,6 @@ The Google Drive drawer item connects a Google account and backs up the Room/SQL
 Before a release build can connect to Google, register `com.scl.mgr` as an Android OAuth client in Google Cloud Console and configure the OAuth consent screen. Use the SHA-1 certificate of the APK you install (debug SHA-1 for debug builds, release SHA-1 for release builds). Enable the Google Drive API.
 
 The app does not need a Gmail password and does not request Gmail message access.
+
+## Google Drive backup password (v1.4)
+The Google Drive backup password can now be remembered on the current device. Enable **Remember me on this device** in the backup password dialog. After a successful sync, the password is stored encrypted using Android Keystore and future syncs will use it automatically without asking again. If the password is invalid, the saved password is cleared and the app asks for it again.
