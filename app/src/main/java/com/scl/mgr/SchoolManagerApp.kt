@@ -26,6 +26,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
 import com.scl.mgr.data.GoogleDriveSyncManager
+import com.scl.mgr.data.AutoSyncWorker
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import java.time.LocalDate
@@ -717,25 +718,24 @@ private fun StudentDetailsScreen(
 private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val prefs = remember { context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE) }
     var account by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context)) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-
-    var pendingAccount by remember {
-        mutableStateOf<com.google.android.gms.auth.api.signin.GoogleSignInAccount?>(null)
-    }
+    var autoSync by remember { mutableStateOf(prefs.getBoolean(AutoSyncWorker.KEY_AUTO_SYNC, false)) }
     var launchRecovery: ((android.content.Intent) -> Unit)? = null
 
     fun performSync(selected: com.google.android.gms.auth.api.signin.GoogleSignInAccount) {
         busy = true
-        status = "Syncing Google Drive backup…"
+        status = "Syncing Google Drive…"
         scope.launch {
             try {
                 val result = syncManager.sync(selected)
+                prefs.edit().putLong(AutoSyncWorker.KEY_LAST_SYNC, System.currentTimeMillis()).apply()
                 status = if (result.restored) {
-                    "Drive backup merged. Added ${result.studentsAdded} student(s) and ${result.attendanceAdded} attendance record(s)."
+                    "Drive database merged. Added ${result.studentsAdded} student(s) and ${result.attendanceAdded} attendance record(s)."
                 } else {
-                    "No backup found. The current database was uploaded to Google Drive."
+                    "No database found. The current database was uploaded to the shared folder."
                 }
             } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
                 status = "Google Drive permission is required. Opening Google authorization…"
@@ -748,7 +748,6 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         }
     }
 
-
     val signInLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
     ) { result ->
@@ -756,7 +755,6 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
             val selected = GoogleSignIn.getSignedInAccountFromIntent(result.data)
                 .getResult(ApiException::class.java)
             account = selected
-            pendingAccount = selected
             performSync(selected)
         } catch (e: ApiException) {
             status = "Google sign-in failed: statusCode=${e.statusCode}, message=${e.message ?: "none"}"
@@ -765,16 +763,14 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         }
     }
 
-
     launchRecovery = { intent -> signInLauncher.launch(intent) }
-
 
     val signInClient = remember(context) {
         GoogleSignIn.getClient(
             context,
             GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
                 .requestEmail()
-                .requestScopes(Scope(GoogleDriveSyncManager.APP_DATA_SCOPE))
+                .requestScopes(Scope(GoogleDriveSyncManager.DRIVE_FILE_SCOPE))
                 .build()
         )
     }
@@ -785,9 +781,10 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
     ) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Google Drive Backup", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("The backup is stored in this app's private Google Drive app-data area.")
-                            }
+                Text("Google Drive Sync", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                Text("Uses the shared School Manager folder and one database file.")
+                Text("Folder ID: ${GoogleDriveSyncManager.SHARED_FOLDER_ID}", style = MaterialTheme.typography.bodySmall)
+            }
         }
 
         if (account == null) {
@@ -798,20 +795,16 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
             ) {
                 Icon(Icons.Default.AccountCircle, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Connect Gmail / Google account")
+                Text("Connect Google account")
             }
         } else {
             ListItem(
                 leadingContent = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
                 headlineContent = { Text(account?.email ?: account?.account?.name.orEmpty()) },
-                supportingContent = { Text("Connected") }
+                supportingContent = { Text("Connected to shared School Manager folder") }
             )
             Button(
-                onClick = {
-                    val selected = account ?: return@Button
-                    pendingAccount = selected
-                    performSync(selected)
-                },
+                onClick = { account?.let(::performSync) },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -819,12 +812,29 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 Spacer(Modifier.width(8.dp))
                 Text(if (busy) "Syncing…" else "Sync now")
             }
+            ListItem(
+                headlineContent = { Text("Auto Sync") },
+                supportingContent = { Text("Sync automatically when internet is available (about every 15 minutes).") },
+                trailingContent = {
+                    Switch(
+                        checked = autoSync,
+                        onCheckedChange = { enabled ->
+                            autoSync = enabled
+                            prefs.edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, enabled).apply()
+                            if (enabled) {
+                                status = "Auto Sync enabled."
+                            } else {
+                                status = "Auto Sync disabled."
+                            }
+                        }
+                    )
+                }
+            )
             OutlinedButton(
                 onClick = {
                     signInClient.signOut()
                     account = null
-                    pendingAccount = null
-                    status = "Google account disconnected from this app. The Drive backup was not deleted."
+                    status = "Google account disconnected. The Drive database was not deleted."
                 },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()
@@ -835,8 +845,8 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
 
         HorizontalDivider()
-        Text("Backup", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("• Google Drive app-data is private to this app and Google account.\n• The database backup is uploaded without app-level encryption.\n• No backup password is required.")
+        Text("Shared database", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("• One plain school_manager.db is stored in the configured shared Google Drive folder.\n• Authorized Google accounts can access the same database.\n• The app merges remote students and attendance into the local database before uploading.\n• No backup password or app-level encryption is used.")
     }
 }
 

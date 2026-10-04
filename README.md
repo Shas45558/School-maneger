@@ -38,3 +38,13 @@ The app does not need a Gmail password and does not request Gmail message access
 
 ## Google Drive backup password (v1.4)
 The Google Drive backup password can now be remembered on the current device. Enable **Remember me on this device** in the backup password dialog. After a successful sync, the password is stored encrypted using Android Keystore and future syncs will use it automatically without asking again. If the password is invalid, the saved password is cleared and the app asks for it again.
+
+
+## Google Drive shared database sync
+
+- The app uses the configured shared Google Drive folder ID `1dk-R0qwoQk_97v0T_jSco5FRko4kvZmi`.
+- The single shared database file is `school_manager.db`.
+- The folder owner must share the folder with each Google account that should sync.
+- Google sign-in is handled by Google; the app does not collect Gmail passwords.
+- Auto Sync can be enabled from the Google Drive screen. It runs at startup and periodically (Android may delay background work) when an internet connection is available.
+- The database is stored without app-level encryption, as requested.

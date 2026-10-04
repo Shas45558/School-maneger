@@ -21,7 +21,8 @@ class GoogleDriveSyncManager(
     private val backupManager: BackupManager
 ) {
     companion object {
-        const val APP_DATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
+        const val DRIVE_FILE_SCOPE = "https://www.googleapis.com/auth/drive"
+        const val SHARED_FOLDER_ID = "1dk-R0qwoQk_97v0T_jSco5FRko4kvZmi"
         const val BACKUP_NAME = "school_manager.db"
         
         private const val DRIVE = "https://www.googleapis.com/drive/v3"
@@ -74,7 +75,7 @@ class GoogleDriveSyncManager(
     private fun accessToken(account: GoogleSignInAccount): String {
         val accountObj: Account = account.account ?: error("Google account is unavailable")
         return try {
-            GoogleAuthUtil.getToken(context, accountObj, "oauth2:$APP_DATA_SCOPE")
+            GoogleAuthUtil.getToken(context, accountObj, "oauth2:$DRIVE_FILE_SCOPE")
         } catch (e: UserRecoverableAuthException) {
             val recoveryIntent = e.intent
                 ?: error("Google authentication recovery intent is unavailable")
@@ -86,25 +87,22 @@ class GoogleDriveSyncManager(
         Request.Builder().url(url).header("Authorization", "Bearer $token")
 
     private fun findBackup(token: String): BackupRef? {
-        fun findByName(name: String): BackupRef? {
-            val query = "'appDataFolder' in parents and name = '$name' and trashed = false"
-            val url = "$DRIVE/files?q=${java.net.URLEncoder.encode(query, "UTF-8")}" +
-                "&spaces=appDataFolder&fields=files(id,name,modifiedTime)"
-            client.newCall(authorizedRequest(token, url).get().build()).execute().use { response ->
-                if (!response.isSuccessful) error("Google Drive list failed (${response.code})")
-                val files = JSONObject(response.body?.string().orEmpty()).optJSONArray("files")
-                return if (files != null && files.length() > 0) {
-                    BackupRef(files.getJSONObject(0).getString("id"))
-                } else null
-            }
+        val query = "'$SHARED_FOLDER_ID' in parents and name = '$BACKUP_NAME' and trashed = false"
+        val url = "$DRIVE/files?q=${java.net.URLEncoder.encode(query, "UTF-8")}" +
+            "&spaces=drive&fields=files(id,name,modifiedTime)"
+        client.newCall(authorizedRequest(token, url).get().build()).execute().use { response ->
+            if (!response.isSuccessful) error("Google Drive folder search failed (${response.code})")
+            val files = JSONObject(response.body?.string().orEmpty()).optJSONArray("files")
+            return if (files != null && files.length() > 0) {
+                BackupRef(files.getJSONObject(0).getString("id"))
+            } else null
         }
-        return findByName(BACKUP_NAME)
     }
 
     private fun createFile(token: String): String {
         val metadata = JSONObject().apply {
             put("name", BACKUP_NAME)
-            put("parents", org.json.JSONArray().put("appDataFolder"))
+            put("parents", org.json.JSONArray().put(SHARED_FOLDER_ID))
         }.toString()
         val body = metadata.toRequestBody("application/json; charset=utf-8".toMediaType())
         val url = "$DRIVE/files?fields=id"
