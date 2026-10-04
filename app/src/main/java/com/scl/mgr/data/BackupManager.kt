@@ -34,20 +34,6 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
         out
     }
 
-    /** Encrypt a local SQLite snapshot before it is uploaded to Drive. */
-    fun encryptSnapshot(snapshot: File, password: String) {
-        val encrypted = File(context.cacheDir, "school_manager_backup.enc")
-        if (encrypted.exists()) encrypted.delete()
-        BackupCrypto.encrypt(snapshot, encrypted, password.toCharArray())
-    }
-
-    /** Decrypt an encrypted Drive backup into the cache database used for merging. */
-    fun decryptSnapshot(remote: File, password: String) {
-        val decrypted = File(context.cacheDir, "school_manager_remote.db")
-        if (decrypted.exists()) decrypted.delete()
-        BackupCrypto.decrypt(remote, decrypted, password.toCharArray())
-    }
-
     /**
      * Merge remote data into the current database without deleting local data.
      * Students are matched by Class + Section + Roll. Existing local student

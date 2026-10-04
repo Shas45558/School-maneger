@@ -22,85 +22,52 @@ class GoogleDriveSyncManager(
 ) {
     companion object {
         const val APP_DATA_SCOPE = "https://www.googleapis.com/auth/drive.appdata"
-        const val BACKUP_NAME = "school_manager.db.enc"
-        private const val LEGACY_BACKUP_NAME = "school_manager.db"
+        const val BACKUP_NAME = "school_manager.db"
+        
         private const val DRIVE = "https://www.googleapis.com/drive/v3"
         private const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
     }
 
     private val client = OkHttpClient()
 
-    /**
-     * Syncs with Google Drive. The database is encrypted with AES-256-GCM before
-     * upload. The same password is required to restore the backup on another phone.
-     */
-    suspend fun sync(account: GoogleSignInAccount, backupPassword: CharArray): SyncResult =
+    /** Syncs the plain SQLite backup with Google Drive app-data. */
+    suspend fun sync(account: GoogleSignInAccount): SyncResult =
         withContext(Dispatchers.IO) {
-            require(backupPassword.size >= 8) { "Backup password must be at least 8 characters." }
-            val password = backupPassword
-
+            val token = accessToken(account)
+            val remote = findBackup(token)
+            val localSnapshot = backupManager.createSnapshot()
             try {
-                val token = accessToken(account)
-                val remote = findBackup(token)
-                val localSnapshot = backupManager.createSnapshot()
-                val encryptedLocal = File(context.cacheDir, "school_manager_backup.db.enc")
+                if (remote == null) {
+                    val id = createFile(token)
+                    uploadContent(token, id, localSnapshot)
+                    return@withContext SyncResult(
+                        connectedEmail = account.email ?: account.account?.name.orEmpty(),
+                        restored = false, studentsAdded = 0, attendanceAdded = 0, uploaded = true
+                    )
+                }
 
+                val remoteDownloaded = File(context.cacheDir, "school_manager_remote.db")
                 try {
-                    BackupCrypto.encrypt(localSnapshot, encryptedLocal, password)
-
-                    if (remote == null) {
-                        val id = createFile(token)
-                        uploadContent(token, id, encryptedLocal)
-                        return@withContext SyncResult(
-                            connectedEmail = account.email ?: account.account?.name.orEmpty(),
-                            restored = false,
-                            studentsAdded = 0,
-                            attendanceAdded = 0,
-                            uploaded = true
-                        )
-                    }
-
-                    val remoteDownloaded = File(context.cacheDir, "school_manager_remote.bin")
-                    val remoteDecrypted = File(context.cacheDir, "school_manager_remote.db")
+                    downloadContent(token, remote.id, remoteDownloaded)
+                    val merged = backupManager.mergeSnapshot(remoteDownloaded)
+                    val mergedSnapshot = backupManager.createSnapshot()
                     try {
-                        downloadContent(token, remote.id, remoteDownloaded)
-
-                        // Older v1.3 backups were plaintext. Read them once and replace
-                        // them with an encrypted backup after the merge.
-                        val snapshotForMerge = if (BackupCrypto.isEncrypted(remoteDownloaded)) {
-                            remoteDecrypted.delete()
-                            BackupCrypto.decrypt(remoteDownloaded, remoteDecrypted, password)
-                            remoteDecrypted
-                        } else {
-                            remoteDownloaded
-                        }
-
-                        val merged = backupManager.mergeSnapshot(snapshotForMerge)
-                        val mergedSnapshot = backupManager.createSnapshot()
-                        try {
-                            BackupCrypto.encrypt(mergedSnapshot, encryptedLocal, password)
-                            uploadContent(token, remote.id, encryptedLocal)
-                        } finally {
-                            mergedSnapshot.delete()
-                        }
-
-                        return@withContext SyncResult(
-                            connectedEmail = account.email ?: account.account?.name.orEmpty(),
-                            restored = true,
-                            studentsAdded = merged.studentsAdded,
-                            attendanceAdded = merged.attendanceAdded,
-                            uploaded = true
-                        )
+                        uploadContent(token, remote.id, mergedSnapshot)
                     } finally {
-                        remoteDownloaded.delete()
-                        remoteDecrypted.delete()
+                        mergedSnapshot.delete()
                     }
+                    return@withContext SyncResult(
+                        connectedEmail = account.email ?: account.account?.name.orEmpty(),
+                        restored = true,
+                        studentsAdded = merged.studentsAdded,
+                        attendanceAdded = merged.attendanceAdded,
+                        uploaded = true
+                    )
                 } finally {
-                    encryptedLocal.delete()
-                    localSnapshot.delete()
+                    remoteDownloaded.delete()
                 }
             } finally {
-                password.fill('\u0000')
+                localSnapshot.delete()
             }
         }
 
@@ -131,7 +98,7 @@ class GoogleDriveSyncManager(
                 } else null
             }
         }
-        return findByName(BACKUP_NAME) ?: findByName(LEGACY_BACKUP_NAME)
+        return findByName(BACKUP_NAME)
     }
 
     private fun createFile(token: String): String {
