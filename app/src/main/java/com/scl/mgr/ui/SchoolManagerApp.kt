@@ -16,6 +16,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavType
 import androidx.navigation.NavGraph.Companion.findStartDestination
@@ -25,6 +26,7 @@ import com.google.android.gms.auth.api.signin.GoogleSignIn
 import com.google.android.gms.auth.api.signin.GoogleSignInOptions
 import com.google.android.gms.common.api.ApiException
 import com.google.android.gms.common.api.Scope
+import com.scl.mgr.data.BackupCrypto
 import com.scl.mgr.data.GoogleDriveSyncManager
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
@@ -720,8 +722,11 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
     var account by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context)) }
     var status by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-
-    var startSync: ((com.google.android.gms.auth.api.signin.GoogleSignInAccount) -> Unit)? = null
+    var showBackupPassword by remember { mutableStateOf(false) }
+    var backupPasswordInput by remember { mutableStateOf("") }
+    var pendingAccount by remember {
+        mutableStateOf<com.google.android.gms.auth.api.signin.GoogleSignInAccount?>(null)
+    }
 
     val signInLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.StartActivityForResult()
@@ -729,7 +734,10 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         try {
             val selected = GoogleSignIn.getSignedInAccountFromIntent(result.data)
                 .getResult(ApiException::class.java)
-            startSync?.invoke(selected)
+            account = selected
+            pendingAccount = selected
+            backupPasswordInput = ""
+            showBackupPassword = true
         } catch (e: ApiException) {
             status = "Google sign-in failed: statusCode=${e.statusCode}, message=${e.message ?: "none"}"
         } catch (e: Exception) {
@@ -737,18 +745,22 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         }
     }
 
-    startSync = { selected ->
-        account = selected
+    fun performSync(
+        selected: com.google.android.gms.auth.api.signin.GoogleSignInAccount,
+        password: String
+    ) {
         busy = true
-        status = "Checking Google Drive backup…"
+        status = "Checking encrypted Google Drive backup…"
         scope.launch {
             try {
-                val result = syncManager.sync(selected)
+                val result = syncManager.sync(selected, password.toCharArray())
                 status = if (result.restored) {
                     "Drive backup merged. Added ${result.studentsAdded} student(s) and ${result.attendanceAdded} attendance record(s)."
                 } else {
-                    "No School Manager backup was found. Current database was uploaded to Google Drive."
+                    "No backup found. The current database was encrypted and uploaded to Google Drive."
                 }
+            } catch (e: BackupCrypto.InvalidBackupException) {
+                status = e.message ?: "Backup password is incorrect or the backup is damaged."
             } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
                 status = "Google Drive permission is required. Opening Google authorization…"
                 signInLauncher.launch(e.recoveryIntent)
@@ -760,8 +772,49 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         }
     }
 
-    LaunchedEffect(Unit) {
-        account?.let { startSync?.invoke(it) }
+    if (showBackupPassword) {
+        AlertDialog(
+            onDismissRequest = { if (!busy) showBackupPassword = false },
+            title = { Text("Backup encryption password") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Create a password for this backup, or enter the existing backup password to restore it.")
+                    OutlinedTextField(
+                        value = backupPasswordInput,
+                        onValueChange = { backupPasswordInput = it },
+                        label = { Text("Backup password") },
+                        singleLine = true,
+                        visualTransformation = PasswordVisualTransformation(),
+                        enabled = !busy
+                    )
+                    Text(
+                        "At least 8 characters. The app does not save the password. You need the same password on a new phone.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pendingAccount?.let { selected ->
+                            val password = backupPasswordInput
+                            if (password.length >= 8) {
+                                showBackupPassword = false
+                                backupPasswordInput = ""
+                                performSync(selected, password)
+                            }
+                        }
+                    },
+                    enabled = backupPasswordInput.length >= 8 && !busy
+                ) { Text("Continue") }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = { showBackupPassword = false },
+                    enabled = !busy
+                ) { Text("Cancel") }
+            }
+        )
     }
 
     val signInClient = remember(context) {
@@ -781,8 +834,8 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         Card(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Google Drive Backup", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Connect a Gmail/Google account. School Manager stores its database in that account's private Drive app-data area.")
-                Text("Your normal student and attendance data stays offline on the phone.", style = MaterialTheme.typography.bodySmall)
+                Text("The backup is stored in this app's private Google Drive app-data area and is encrypted before upload.")
+                Text("Your database is encrypted with your backup password before it leaves the phone.", style = MaterialTheme.typography.bodySmall)
             }
         }
 
@@ -803,7 +856,12 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 supportingContent = { Text("Connected") }
             )
             Button(
-                onClick = { account?.let(::startSync) },
+                onClick = {
+                    val selected = account ?: return@Button
+                    pendingAccount = selected
+                    backupPasswordInput = ""
+                    showBackupPassword = true
+                },
                 enabled = !busy,
                 modifier = Modifier.fillMaxWidth()
             ) {
@@ -815,6 +873,7 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 onClick = {
                     signInClient.signOut()
                     account = null
+                    pendingAccount = null
                     status = "Google account disconnected from this app. The Drive backup was not deleted."
                 },
                 enabled = !busy,
@@ -826,8 +885,8 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
         status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
 
         HorizontalDivider()
-        Text("Merge behavior", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("• If no backup exists, the current database is uploaded.\n• If a backup exists, students are merged using Class + Section + Roll.\n• Existing local student details are kept when the same student exists on both sides.\n• Attendance is merged by Student + Date.\n• The merged database is uploaded back to Drive.")
+        Text("Backup security", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+        Text("• Google Drive app-data is private to this app and Google account.\n• The uploaded database is additionally encrypted with AES-256-GCM.\n• The backup password is never uploaded or saved by the app.\n• Use the same password to restore the backup on another phone.\n• If the password is lost, the encrypted backup cannot be recovered.")
     }
 }
 

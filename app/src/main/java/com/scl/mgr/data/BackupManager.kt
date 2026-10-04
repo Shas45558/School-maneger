@@ -2,30 +2,55 @@ package com.scl.mgr.data
 
 import android.content.Context
 import androidx.room.Room
+import androidx.sqlite.db.SimpleSQLiteQuery
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 
-/** Creates a consistent SQLite snapshot and safely merges another snapshot into Room. */
+/** Creates consistent SQLite snapshots and safely merges remote snapshots into Room. */
 class BackupManager(private val context: Context, private val db: AppDatabase) {
 
     suspend fun createSnapshot(): File = withContext(Dispatchers.IO) {
         val out = File(context.cacheDir, "school_manager_backup.db")
         if (out.exists()) out.delete()
-        // wal_checkpoint returns a result set, so execute it as a query.
-        db.openHelper.writableDatabase.query("PRAGMA wal_checkpoint(FULL)").use { cursor ->
-            while (cursor.moveToNext()) { /* consume result */ }
+
+        // PRAGMA wal_checkpoint returns rows, so query() is correct here.
+        db.openHelper.writableDatabase.query(
+            SimpleSQLiteQuery("PRAGMA wal_checkpoint(FULL)")
+        ).use { cursor ->
+            while (cursor.moveToNext()) Unit
         }
+
+        // VACUUM INTO is a SQL command, not a SELECT query. execSQL avoids
+        // the previous "Queries can be performed ... only" SQLITE_OK error.
         val escaped = out.absolutePath.replace("'", "''")
         db.openHelper.writableDatabase.execSQL("VACUUM INTO '$escaped'")
+
+        if (!out.isFile || out.length() == 0L) {
+            error("SQLite backup snapshot was not created")
+        }
         out
+    }
+
+    /** Encrypt a local SQLite snapshot before it is uploaded to Drive. */
+    fun encryptSnapshot(snapshot: File, password: String) {
+        val encrypted = File(context.cacheDir, "school_manager_backup.enc")
+        if (encrypted.exists()) encrypted.delete()
+        BackupCrypto.encrypt(snapshot, encrypted, password.toCharArray())
+    }
+
+    /** Decrypt an encrypted Drive backup into the cache database used for merging. */
+    fun decryptSnapshot(remote: File, password: String) {
+        val decrypted = File(context.cacheDir, "school_manager_remote.db")
+        if (decrypted.exists()) decrypted.delete()
+        BackupCrypto.decrypt(remote, decrypted, password.toCharArray())
     }
 
     /**
      * Merge remote data into the current database without deleting local data.
-     * Students are matched by Class + Section + Roll. For conflicts, local student
+     * Students are matched by Class + Section + Roll. Existing local student
      * details win; attendance records are unioned by student + date.
      */
     suspend fun mergeSnapshot(snapshot: File): MergeResult = withContext(Dispatchers.IO) {
@@ -48,9 +73,7 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
                 if (existing != null) {
                     idMap[remoteStudent.id] = existing.id
                 } else {
-                    val newId = db.studentDao().insert(
-                        remoteStudent.copy(id = 0)
-                    )
+                    val newId = db.studentDao().insert(remoteStudent.copy(id = 0))
                     val inserted = db.studentDao().getById(newId)!!
                     localByKey[key(inserted)] = inserted
                     idMap[remoteStudent.id] = newId
