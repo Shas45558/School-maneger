@@ -1,10 +1,17 @@
 package com.scl.mgr
 
 import android.app.Activity
+import android.Manifest
+import android.content.pm.PackageManager
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.net.Uri
 import android.content.Intent
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
+import androidx.core.content.ContextCompat
 import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1012,6 +1019,7 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     var showMonth by remember { mutableStateOf(false) }
     var showSubject by remember { mutableStateOf(false) }
     var activeStudentId by remember { mutableStateOf<Long?>(null) }
+    var pendingPdfAfterPermission by rememberSaveable { mutableStateOf(false) }
 
     val subjects = examSubjects(className)
     val selectedSubject = subjects.getOrNull(subjectIndex) ?: subjects.first()
@@ -1068,18 +1076,27 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
         }
     }
 
+    val storagePermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted) {
+            pendingPdfAfterPermission = true
+        } else {
+            message = "Storage permission is required to save the PDF in Downloads/School Manager."
+        }
+    }
+
     fun generatePdf() {
         scope.launch {
             try {
                 message = "Creating PDF…"
                 val all = repository.monthlyExamsOnce(month).associateBy { it.studentId }
                 val ordered = classStudents.sortedWith(compareBy({ it.studentId.toIntOrNull() ?: Int.MAX_VALUE }, { it.studentName.lowercase() }))
-                val file = generateMonthlyExamPdf(context, className, section, month, subjects, ordered, all)
-                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+                val result = generateMonthlyExamPdf(context, className, section, month, subjects, ordered, all)
 
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/pdf"
-                    putExtra(Intent.EXTRA_STREAM, uri)
+                    putExtra(Intent.EXTRA_STREAM, result.uri)
                     addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
                 }
                 val chooser = Intent.createChooser(shareIntent, "Share Monthly Exam PDF").apply {
@@ -1088,14 +1105,20 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
 
                 try {
                     context.startActivity(chooser)
-                    message = "PDF created successfully"
+                    message = "PDF saved to Downloads/School Manager"
                 } catch (_: android.content.ActivityNotFoundException) {
-                    // Some devices have no PDF/share activity. The file is still safely created.
-                    message = "PDF saved: ${file.name}"
+                    message = "PDF saved to Downloads/School Manager/${result.fileName}"
                 }
             } catch (e: Exception) {
                 message = "PDF failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
             }
+        }
+    }
+
+    LaunchedEffect(pendingPdfAfterPermission) {
+        if (pendingPdfAfterPermission) {
+            pendingPdfAfterPermission = false
+            generatePdf()
         }
     }
 
@@ -1314,11 +1337,25 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
             Button(onClick = { saveCurrentSubject(subjectIndex < subjects.lastIndex) }, enabled = classStudents.isNotEmpty(), modifier = Modifier.weight(1.3f)) {
                 Text(if (subjectIndex < subjects.lastIndex) "Save & Next" else "Save All")
             }
-            Button(onClick = { generatePdf() }, enabled = classStudents.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("Generate PDF") }
+            Button(
+                onClick = {
+                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                    ) {
+                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                    } else {
+                        generatePdf()
+                    }
+                },
+                enabled = classStudents.isNotEmpty(),
+                modifier = Modifier.weight(1f)
+            ) { Text("Generate PDF") }
         }
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp)) }
     }
 }
+
+private data class PdfOutput(val uri: Uri, val fileName: String)
 
 private fun generateMonthlyExamPdf(
     context: android.content.Context,
@@ -1328,7 +1365,7 @@ private fun generateMonthlyExamPdf(
     subjects: List<Pair<String, String>>,
     students: List<Student>,
     exams: Map<Long, MonthlyExam>
-): File {
+): PdfOutput {
     val doc = PdfDocument()
     val pageWidth = 842
     val pageHeight = 595
@@ -1362,7 +1399,6 @@ private fun generateMonthlyExamPdf(
         paint.style = Paint.Style.FILL
         y += 24f
         val rowHeight = 22f
-        var rows = 0
         while (index < students.size && y + rowHeight < pageHeight - 40f) {
             val s = students[index]
             val e = exams[s.id]
@@ -1382,18 +1418,48 @@ private fun generateMonthlyExamPdf(
             }
             y += rowHeight
             index++
-            rows++
         }
         c.drawText("Page $pageNumber", pageWidth - 70f, pageHeight - 18f, textPaint)
         doc.finishPage(page)
         if (students.isEmpty()) break
     }
-    val dir = File(context.getExternalFilesDir("Documents") ?: context.filesDir, "monthly_exam")
-    dir.mkdirs()
-    val file = File(dir, "Monthly_Exam_Class_${className}_${section}_${yearMonth}.pdf")
-    try {
-        file.outputStream().use { output -> doc.writeTo(output) }
-        return file
+
+    val fileName = "Monthly_Exam_Class_${className}_${section}_${yearMonth}.pdf"
+    return try {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            // Android 10+: MediaStore can create a real public Downloads file without
+            // broad storage permission, using scoped storage correctly.
+            val values = android.content.ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
+                put(MediaStore.Downloads.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/School Manager")
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val resolver = context.contentResolver
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+                ?: throw java.io.IOException("Unable to create Downloads/School Manager file")
+            try {
+                resolver.openOutputStream(uri)?.use { output -> doc.writeTo(output) }
+                    ?: throw java.io.IOException("Unable to open PDF output stream")
+                val done = android.content.ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
+                resolver.update(uri, done, null, null)
+                PdfOutput(uri, fileName)
+            } catch (e: Exception) {
+                resolver.delete(uri, null, null)
+                throw e
+            }
+        } else {
+            // Android 8/9: public Downloads requires WRITE_EXTERNAL_STORAGE permission.
+            val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            val dir = File(downloads, "School Manager")
+            if (!dir.exists() && !dir.mkdirs()) {
+                throw java.io.IOException("Unable to create Downloads/School Manager")
+            }
+            val file = File(dir, fileName)
+            file.outputStream().use { output -> doc.writeTo(output) }
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            PdfOutput(uri, fileName)
+        }
     } finally {
         doc.close()
     }
