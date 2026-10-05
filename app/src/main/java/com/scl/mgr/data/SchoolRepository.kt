@@ -19,6 +19,7 @@ class SchoolRepository(private val db: AppDatabase) {
 
     suspend fun deleteStudent(student: Student) {
         db.attendanceDao().deleteForStudent(student.id)
+        db.monthlyExamDao().deleteForStudent(student.id)
         db.studentDao().delete(student)
     }
 
@@ -41,5 +42,11 @@ class SchoolRepository(private val db: AppDatabase) {
     suspend fun presentCountBetween(startDate: String, endDate: String): Int = db.attendanceDao().presentCountBetween(startDate, endDate)
     suspend fun absentCountBetween(startDate: String, endDate: String): Int = db.attendanceDao().absentCountBetween(startDate, endDate)
     suspend fun studentPresentCountBetween(studentId: Long, startDate: String, endDate: String): Int = db.attendanceDao().studentPresentCountBetween(studentId, startDate, endDate)
+    fun monthlyExams(yearMonth: String): Flow<List<MonthlyExam>> = db.monthlyExamDao().observeForMonth(yearMonth)
+
+    suspend fun saveMonthlyExams(exams: List<MonthlyExam>) = db.monthlyExamDao().upsertAll(exams)
+
+    suspend fun monthlyExamsOnce(yearMonth: String): List<MonthlyExam> = db.monthlyExamDao().getForMonth(yearMonth)
+
     suspend fun studentAbsentCountBetween(studentId: Long, startDate: String, endDate: String): Int = db.attendanceDao().studentAbsentCountBetween(studentId, startDate, endDate)
 }

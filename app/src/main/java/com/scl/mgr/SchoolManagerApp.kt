@@ -1,6 +1,11 @@
 package com.scl.mgr
 
 import android.app.Activity
+import android.content.Intent
+import android.graphics.Paint
+import android.graphics.pdf.PdfDocument
+import androidx.core.content.FileProvider
+import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -29,6 +34,7 @@ import com.scl.mgr.data.GoogleDriveSyncManager
 import com.scl.mgr.data.AutoSyncWorker
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
+import com.scl.mgr.data.MonthlyExam
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -58,6 +64,7 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
             DrawerItem("classes", "Classes", Icons.Default.Class, true),
             DrawerItem("subjects", "Subjects", Icons.Default.MenuBook, true),
             DrawerItem("attendance", "Attendance", Icons.Default.CheckCircle),
+            DrawerItem("monthly_exam", "Monthly Exam", Icons.Default.Assignment),
             DrawerItem("exams", "Exams & Results", Icons.Default.Assignment, true),
             DrawerItem("fees", "Fees & Payments", Icons.Default.AccountBalanceWallet, true),
             DrawerItem("notices", "Notices", Icons.Default.Notifications, true),
@@ -173,6 +180,11 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
             composable("attendance") {
                 AppScaffold("Attendance", drawerState, scope) {
                     AttendanceScreen(repository)
+                }
+            }
+            composable("monthly_exam") {
+                AppScaffold("Monthly Exam", drawerState, scope) {
+                    MonthlyExamScreen(repository)
                 }
             }
             composable("student/add") {
@@ -921,4 +933,275 @@ private fun AboutScreen() {
         Spacer(Modifier.height(20.dp))
         Text("Package: com.scl.mgr", style = MaterialTheme.typography.bodySmall)
     }
+}
+
+
+private val LOWER_EXAM_SUBJECTS = listOf(
+    "Bangla" to "bangla",
+    "English" to "english",
+    "Math" to "math",
+    "S.Science" to "socialScience",
+    "Science" to "science",
+    "Religion" to "religion"
+)
+
+private val UPPER_EXAM_SUBJECTS = listOf(
+    "Bangla" to "bangla",
+    "English" to "english",
+    "Math" to "math",
+    "S.Science" to "socialScience",
+    "Religion" to "religion",
+    "Physics" to "physics",
+    "Chemistry" to "chemistry",
+    "Biology" to "biology",
+    "H.M./Agri." to "hMOrAgri"
+)
+
+private fun examSubjects(className: String): List<Pair<String, String>> =
+    if (className == "9" || className == "10") UPPER_EXAM_SUBJECTS else LOWER_EXAM_SUBJECTS
+
+private fun markFor(exam: MonthlyExam?, key: String): Int? = when (key) {
+    "bangla" -> exam?.bangla
+    "english" -> exam?.english
+    "math" -> exam?.math
+    "socialScience" -> exam?.socialScience
+    "science" -> exam?.science
+    "religion" -> exam?.religion
+    "physics" -> exam?.physics
+    "chemistry" -> exam?.chemistry
+    "biology" -> exam?.biology
+    "hMOrAgri" -> exam?.hMOrAgri
+    else -> null
+}
+
+private fun withMark(exam: MonthlyExam, key: String, value: Int?): MonthlyExam = when (key) {
+    "bangla" -> exam.copy(bangla = value)
+    "english" -> exam.copy(english = value)
+    "math" -> exam.copy(math = value)
+    "socialScience" -> exam.copy(socialScience = value)
+    "science" -> exam.copy(science = value)
+    "religion" -> exam.copy(religion = value)
+    "physics" -> exam.copy(physics = value)
+    "chemistry" -> exam.copy(chemistry = value)
+    "biology" -> exam.copy(biology = value)
+    "hMOrAgri" -> exam.copy(hMOrAgri = value)
+    else -> exam
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MonthlyExamScreen(repository: SchoolRepository) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val students by repository.students("").collectAsState(initial = emptyList())
+    var className by rememberSaveable { mutableStateOf("6") }
+    var section by rememberSaveable { mutableStateOf("A") }
+    var month by rememberSaveable { mutableStateOf(YearMonth.now().toString()) }
+    var subjectIndex by rememberSaveable { mutableIntStateOf(0) }
+    var marks by remember { mutableStateOf<Map<Long, String>>(emptyMap()) }
+    var exams by remember { mutableStateOf<Map<Long, MonthlyExam>>(emptyMap()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var showClass by remember { mutableStateOf(false) }
+    var showSection by remember { mutableStateOf(false) }
+    var showMonth by remember { mutableStateOf(false) }
+
+    val subjects = examSubjects(className)
+    val selectedSubject = subjects.getOrNull(subjectIndex) ?: subjects.first()
+    val classStudents = remember(students, className, section) {
+        students.filter { it.className == className && it.section == section }
+    }
+
+    LaunchedEffect(month) {
+        exams = repository.monthlyExamsOnce(month).associateBy { it.studentId }
+    }
+    LaunchedEffect(className, section, month, subjectIndex, classStudents, exams) {
+        marks = classStudents.associate { student ->
+            student.id to (markFor(exams[student.id], selectedSubject.second)?.toString() ?: "")
+        }
+    }
+
+    fun saveCurrentSubject(next: Boolean) {
+        scope.launch {
+            val saved = classStudents.map { student ->
+                val existing = exams[student.id] ?: MonthlyExam(student.id, month)
+                val raw = marks[student.id]?.trim().orEmpty()
+                val value = raw.toIntOrNull()?.coerceIn(0, 20)
+                withMark(existing, selectedSubject.second, if (raw.isBlank()) null else value)
+            }
+            repository.saveMonthlyExams(saved)
+            exams = (exams + saved.associateBy { it.studentId })
+            message = "${selectedSubject.first} saved"
+            if (next && subjectIndex < subjects.lastIndex) subjectIndex++
+        }
+    }
+
+    fun generatePdf() {
+        scope.launch {
+            val all = repository.monthlyExamsOnce(month).associateBy { it.studentId }
+            val ordered = classStudents.sortedWith(compareBy({ it.studentId.toIntOrNull() ?: Int.MAX_VALUE }, { it.studentName.lowercase() }))
+            val file = generateMonthlyExamPdf(context, className, section, month, subjects, ordered, all)
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            val intent = Intent(Intent.ACTION_SEND).apply {
+                type = "application/pdf"
+                putExtra(Intent.EXTRA_STREAM, uri)
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            context.startActivity(Intent.createChooser(intent, "Share Monthly Exam PDF"))
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Monthly Exam", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Classes 6–8: 6 subjects / 120 marks • Classes 9–10: 9 subjects / 180 marks", style = MaterialTheme.typography.bodySmall)
+        Spacer(Modifier.height(12.dp))
+
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { showClass = true }, modifier = Modifier.fillMaxWidth()) { Text("Class $className") }
+                DropdownMenu(showClass, { showClass = false }) {
+                    listOf("6", "7", "8", "9", "10").forEach { value ->
+                        DropdownMenuItem(text = { Text("Class $value") }, onClick = { className = value; subjectIndex = 0; showClass = false })
+                    }
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { showSection = true }, modifier = Modifier.fillMaxWidth()) { Text("Section $section") }
+                DropdownMenu(showSection, { showSection = false }) {
+                    listOf("A", "B").forEach { value ->
+                        DropdownMenuItem(text = { Text("Section $value") }, onClick = { section = value; showSection = false })
+                    }
+                }
+            }
+            Box(Modifier.weight(1f)) {
+                OutlinedButton(onClick = { showMonth = true }, modifier = Modifier.fillMaxWidth()) { Text(month) }
+                DropdownMenu(showMonth, { showMonth = false }) {
+                    val months = (0..11).map { YearMonth.of(YearMonth.now().year, it + 1) }
+                    months.forEach { ym ->
+                        DropdownMenuItem(text = { Text(ym.format(DateTimeFormatter.ofPattern("MMMM yyyy"))) }, onClick = { month = ym.toString(); showMonth = false })
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(12.dp))
+        Text("Subject ${subjectIndex + 1} of ${subjects.size}: ${selectedSubject.first} (0–20)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(8.dp))
+
+        if (classStudents.isEmpty()) {
+            Card(Modifier.fillMaxWidth()) { Text("No students found for Class $className, Section $section. Add students first.", Modifier.padding(16.dp)) }
+        } else {
+            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                item {
+                    Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Text("Roll", Modifier.width(58.dp), fontWeight = FontWeight.Bold)
+                        Text("Student Name", Modifier.weight(1f), fontWeight = FontWeight.Bold)
+                        Text("Mark / 20", fontWeight = FontWeight.Bold)
+                    }
+                }
+                items(classStudents, key = { it.id }) { student ->
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Text(student.studentId, Modifier.width(58.dp))
+                        Text(student.studentName, Modifier.weight(1f), maxLines = 1)
+                        OutlinedTextField(
+                            value = marks[student.id] ?: "",
+                            onValueChange = { value ->
+                                if (value.length <= 2 && value.all(Char::isDigit) && (value.toIntOrNull() ?: 0) <= 20) {
+                                    marks = marks + (student.id to value)
+                                }
+                            },
+                            modifier = Modifier.width(100.dp),
+                            singleLine = true,
+                            placeholder = { Text("0–20") }
+                        )
+                    }
+                }
+            }
+        }
+
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            OutlinedButton(onClick = { if (subjectIndex > 0) subjectIndex-- }, enabled = subjectIndex > 0, modifier = Modifier.weight(1f)) { Text("Previous") }
+            Button(onClick = { saveCurrentSubject(subjectIndex < subjects.lastIndex) }, enabled = classStudents.isNotEmpty(), modifier = Modifier.weight(1.3f)) {
+                Text(if (subjectIndex < subjects.lastIndex) "Save & Next" else "Save All")
+            }
+            Button(onClick = { generatePdf() }, enabled = classStudents.isNotEmpty(), modifier = Modifier.weight(1f)) { Text("Generate PDF") }
+        }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp)) }
+    }
+}
+
+private fun generateMonthlyExamPdf(
+    context: android.content.Context,
+    className: String,
+    section: String,
+    yearMonth: String,
+    subjects: List<Pair<String, String>>,
+    students: List<Student>,
+    exams: Map<Long, MonthlyExam>
+): File {
+    val doc = PdfDocument()
+    val pageWidth = 842
+    val pageHeight = 595
+    val margin = 24f
+    val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK }
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 20f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 9f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 8f }
+    val totalMax = subjects.size * 20
+    val monthTitle = try { YearMonth.parse(yearMonth).format(DateTimeFormatter.ofPattern("MMMM yyyy")) } catch (_: Exception) { yearMonth }
+    val columns = listOf("Roll", "Student") + subjects.map { it.first } + "Total"
+    val widths = mutableListOf(42f, 145f).apply { repeat(subjects.size) { add(60f) }; add(55f) }
+    var pageNumber = 0
+    var index = 0
+    while (index < students.size || students.isEmpty() && pageNumber == 0) {
+        pageNumber++
+        val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
+        val c = page.canvas
+        c.drawText("School Manager", margin, 30f, titlePaint)
+        c.drawText("Monthly Examination — Class $className, Section $section — $monthTitle", margin, 50f, textPaint)
+        c.drawText("Maximum: $totalMax", pageWidth - 105f, 50f, headerPaint)
+        var x = margin
+        var y = 70f
+        paint.style = Paint.Style.STROKE
+        c.drawRect(margin, y, pageWidth - margin, y + 24f, paint)
+        columns.forEachIndexed { i, name ->
+            c.drawText(name, x + 3f, y + 16f, headerPaint)
+            x += widths[i]
+            if (i < columns.lastIndex) c.drawLine(x, y, x, y + 24f, paint)
+        }
+        paint.style = Paint.Style.FILL
+        y += 24f
+        val rowHeight = 22f
+        var rows = 0
+        while (index < students.size && y + rowHeight < pageHeight - 40f) {
+            val s = students[index]
+            val e = exams[s.id]
+            x = margin
+            paint.style = Paint.Style.STROKE
+            c.drawRect(margin, y, pageWidth - margin, y + rowHeight, paint)
+            paint.style = Paint.Style.FILL
+            val values = mutableListOf(s.studentId, s.studentName)
+            val marks = subjects.map { markFor(e, it.second) }
+            val total = marks.filterNotNull().sum()
+            values.addAll(marks.map { it?.toString() ?: "" })
+            values.add(if (marks.any { it != null }) total.toString() else "")
+            values.forEachIndexed { i, value ->
+                c.drawText(value.take(if (i == 1) 24 else 11), x + 3f, y + 15f, textPaint)
+                x += widths[i]
+                if (i < values.lastIndex) c.drawLine(x, y, x, y + rowHeight, paint)
+            }
+            y += rowHeight
+            index++
+            rows++
+        }
+        c.drawText("Page $pageNumber", pageWidth - 70f, pageHeight - 18f, textPaint)
+        doc.finishPage(page)
+        if (students.isEmpty()) break
+    }
+    val dir = File(context.getExternalFilesDir("Documents") ?: context.filesDir, "monthly_exam")
+    dir.mkdirs()
+    val file = File(dir, "Monthly_Exam_Class_${className}_${section}_${yearMonth}.pdf")
+    file.outputStream().use { doc.writeTo(it) }
+    doc.close()
+    return file
 }
