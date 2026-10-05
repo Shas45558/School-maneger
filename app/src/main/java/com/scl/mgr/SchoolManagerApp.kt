@@ -9,6 +9,7 @@ import java.io.File
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -1018,10 +1019,6 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
         students.filter { it.className == className && it.section == section }
     }
     val listState = rememberLazyListState()
-    val focusRequesters = remember(classStudents.map { it.id }) {
-        classStudents.associate { it.id to FocusRequester() }
-    }
-
     LaunchedEffect(month) {
         exams = repository.monthlyExamsOnce(month).associateBy { it.studentId }
     }
@@ -1047,7 +1044,6 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
             activeStudentId = next.id
             scope.launch {
                 listState.animateScrollToItem(index + 1)
-                focusRequesters[next.id]?.requestFocus()
             }
         } else {
             message = "Last student reached. Press Save & Next to continue."
@@ -1184,22 +1180,36 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(student.studentId, Modifier.width(58.dp))
                         Text(student.studentName, Modifier.weight(1f), maxLines = 1)
-                        OutlinedTextField(
-                            value = marks[student.id] ?: "",
-                            onValueChange = { value -> setMark(student.id, value) },
+                        // This is intentionally NOT a TextField. A read-only TextField can
+                        // consume the tap/focus event before the app keypad is opened.
+                        // A clickable surface makes every tap reliably open our built-in keypad
+                        // and never invokes the Android/system keyboard.
+                        Surface(
                             modifier = Modifier
                                 .width(100.dp)
-                                .clickable { activeStudentId = student.id }
-                                .focusRequester(focusRequesters[student.id]!!),
-                            singleLine = true,
-                            readOnly = true,
-                            placeholder = { Text("0–20") },
-                            label = if (isActive) ({ Text("Active") }) else null,
-                            colors = if (isActive) OutlinedTextFieldDefaults.colors(
-                                focusedBorderColor = MaterialTheme.colorScheme.primary,
-                                unfocusedBorderColor = MaterialTheme.colorScheme.primary
-                            ) else OutlinedTextFieldDefaults.colors()
-                        )
+                                .height(56.dp)
+                                .clickable { activeStudentId = student.id },
+                            shape = MaterialTheme.shapes.small,
+                            border = BorderStroke(
+                                width = if (isActive) 2.dp else 1.dp,
+                                color = if (isActive) MaterialTheme.colorScheme.primary
+                                else MaterialTheme.colorScheme.outline
+                            ),
+                            color = MaterialTheme.colorScheme.surface
+                        ) {
+                            Box(
+                                Modifier.fillMaxSize().padding(horizontal = 12.dp),
+                                contentAlignment = Alignment.CenterStart
+                            ) {
+                                Text(
+                                    text = marks[student.id].takeUnless { it.isNullOrBlank() } ?: "0–20",
+                                    color = if (marks[student.id].isNullOrBlank())
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    else MaterialTheme.colorScheme.onSurface,
+                                    style = MaterialTheme.typography.bodyLarge
+                                )
+                            }
+                        }
                     }
                 }
             }
