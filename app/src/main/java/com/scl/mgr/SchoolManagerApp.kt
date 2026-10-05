@@ -1204,20 +1204,52 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                 }
             }
 
-            // Special in-app dial-pad style marks keyboard. It replaces the normal
-            // Android keyboard and has a dedicated Enter button that advances focus.
+            // Built-in marks keyboard. This is an app keyboard (not the Android IME),
+            // so tapping a mark box never opens the phone's normal keyboard.
+            // It appears as a bottom popup, similar to the keypad shown in the user's example.
             if (activeStudentId != null) {
-                Spacer(Modifier.height(8.dp))
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(8.dp)) {
+                val activeStudent = classStudents.firstOrNull { it.id == activeStudentId }
+                ModalBottomSheet(
+                    onDismissRequest = { activeStudentId = null },
+                    dragHandle = { BottomSheetDefaults.DragHandle() }
+                ) {
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(start = 12.dp, end = 12.dp, bottom = 18.dp)
+                    ) {
                         Text(
-                            "Marks keypad • ${classStudents.firstOrNull { it.id == activeStudentId }?.studentName ?: "Student"}",
-                            style = MaterialTheme.typography.titleSmall,
+                            "Enter marks • ${activeStudent?.studentName ?: "Student"}",
+                            style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold
                         )
+                        Text(
+                            "Class $className • Section $section • ${selectedSubject.first} • 0–20",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        Spacer(Modifier.height(10.dp))
+
+                        // Large read-only display: the keypad itself is the input method.
+                        Box(
+                            Modifier
+                                .fillMaxWidth()
+                                .height(54.dp),
+                            contentAlignment = Alignment.CenterEnd
+                        ) {
+                            Text(
+                                text = marks[activeStudentId] ?: "",
+                                style = MaterialTheme.typography.headlineSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(Modifier.height(8.dp))
+
                         val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫")
                         keys.chunked(3).forEach { row ->
-                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Row(
+                                Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
                                 row.forEach { key ->
                                     Button(
                                         onClick = {
@@ -1228,18 +1260,37 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                                                 else -> setMark(id, (marks[id] ?: "") + key)
                                             }
                                         },
-                                        modifier = Modifier.weight(1f)
-                                    ) { Text(key, style = MaterialTheme.typography.titleMedium) }
+                                        modifier = Modifier
+                                            .weight(1f)
+                                            .height(56.dp),
+                                        shape = MaterialTheme.shapes.medium
+                                    ) {
+                                        Text(key, style = MaterialTheme.typography.titleLarge)
+                                    }
                                 }
                             }
-                            Spacer(Modifier.height(5.dp))
+                            Spacer(Modifier.height(7.dp))
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(onClick = { activeStudentId = null }, modifier = Modifier.weight(1f)) {
+
+                        Row(
+                            Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedButton(
+                                onClick = { activeStudentId = null },
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(52.dp)
+                            ) {
                                 Text("Close")
                             }
-                            Button(onClick = { moveToNextStudent() }, modifier = Modifier.weight(1.6f)) {
-                                Text("Enter → Next")
+                            Button(
+                                onClick = { moveToNextStudent() },
+                                modifier = Modifier
+                                    .weight(2f)
+                                    .height(52.dp)
+                            ) {
+                                Text("Enter  →  Next", style = MaterialTheme.typography.titleMedium)
                             }
                         }
                     }
