@@ -530,6 +530,10 @@ private fun AttendanceScreen(repository: SchoolRepository) {
     var date by remember { mutableStateOf(LocalDate.now().toString()) }
     var month by remember { mutableStateOf(YearMonth.now()) }
     var showDatePicker by remember { mutableStateOf(false) }
+    var datePickerTarget by remember { mutableStateOf("attendance") }
+    var customRange by remember { mutableStateOf(false) }
+    var fromDate by remember { mutableStateOf(LocalDate.now().withDayOfMonth(1).toString()) }
+    var toDate by remember { mutableStateOf(LocalDate.now().toString()) }
     var tab by remember { mutableIntStateOf(0) }
     var statuses by remember { mutableStateOf<Map<Long, Boolean?>>(emptyMap()) }
     val scope = rememberCoroutineScope()
@@ -591,29 +595,47 @@ private fun AttendanceScreen(repository: SchoolRepository) {
                 }
             }
         } else {
-            val start = month.atDay(1).toString()
-            val end = month.atEndOfMonth().toString()
+            val start = if (customRange) fromDate else month.atDay(1).toString()
+            val end = if (customRange) toDate else month.atEndOfMonth().toString()
+            val validRange = runCatching { LocalDate.parse(start) <= LocalDate.parse(end) }.getOrDefault(false)
             LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 item {
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
-                        IconButton(onClick = { month = month.minusMonths(1) }) { Icon(Icons.Default.ChevronLeft, contentDescription = "Previous month") }
-                        Text(month.format(DateTimeFormatter.ofPattern("MMMM yyyy")), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                        IconButton(onClick = { month = month.plusMonths(1) }) { Icon(Icons.Default.ChevronRight, contentDescription = "Next month") }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(selected = !customRange, onClick = { customRange = false }, label = { Text("Monthly") })
+                        FilterChip(selected = customRange, onClick = { customRange = true }, label = { Text("Custom Range") })
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    if (customRange) {
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedTextField(value = fromDate, onValueChange = { fromDate = it }, label = { Text("From date") }, modifier = Modifier.weight(1f), singleLine = true,
+                                trailingIcon = { IconButton(onClick = { datePickerTarget = "from"; showDatePicker = true }) { Icon(Icons.Default.DateRange, contentDescription = "Choose from date") } })
+                            OutlinedTextField(value = toDate, onValueChange = { toDate = it }, label = { Text("To date") }, modifier = Modifier.weight(1f), singleLine = true,
+                                trailingIcon = { IconButton(onClick = { datePickerTarget = "to"; showDatePicker = true }) { Icon(Icons.Default.DateRange, contentDescription = "Choose to date") } })
+                        }
+                        if (!validRange) Text("From date must be on or before the To date.", color = MaterialTheme.colorScheme.error)
+                    } else {
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
+                            IconButton(onClick = { month = month.minusMonths(1) }) { Icon(Icons.Default.ChevronLeft, contentDescription = "Previous month") }
+                            Text(month.format(DateTimeFormatter.ofPattern("MMMM yyyy")), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                            IconButton(onClick = { month = month.plusMonths(1) }) { Icon(Icons.Default.ChevronRight, contentDescription = "Next month") }
+                        }
                     }
                 }
-                items(filteredStudents, key = { "month-${it.id}" }) { student ->
-                    var p by remember(student.id, start, end) { mutableIntStateOf(0) }
-                    var a by remember(student.id, start, end) { mutableIntStateOf(0) }
-                    LaunchedEffect(student.id, start, end) {
-                        p = repository.studentPresentCountBetween(student.id, start, end)
-                        a = repository.studentAbsentCountBetween(student.id, start, end)
-                    }
-                    Card(Modifier.fillMaxWidth()) {
-                        ListItem(
-                            headlineContent = { Text(student.studentName, fontWeight = FontWeight.Bold) },
-                            supportingContent = { Text("Roll ${student.studentId} • Class ${student.className}-${student.section}") },
-                            trailingContent = { Text("P $p  •  A $a", fontWeight = FontWeight.Bold) }
-                        )
+                if (validRange) {
+                    items(filteredStudents, key = { "month-${it.id}" }) { student ->
+                        var p by remember(student.id, start, end) { mutableIntStateOf(0) }
+                        var a by remember(student.id, start, end) { mutableIntStateOf(0) }
+                        LaunchedEffect(student.id, start, end) {
+                            p = repository.studentPresentCountBetween(student.id, start, end)
+                            a = repository.studentAbsentCountBetween(student.id, start, end)
+                        }
+                        Card(Modifier.fillMaxWidth()) {
+                            ListItem(
+                                headlineContent = { Text(student.studentName, fontWeight = FontWeight.Bold) },
+                                supportingContent = { Text("Roll ${student.studentId} • Class ${student.className}-${student.section}") },
+                                trailingContent = { Text("P $p  •  A $a", fontWeight = FontWeight.Bold) }
+                            )
+                        }
                     }
                 }
             }
@@ -621,10 +643,31 @@ private fun AttendanceScreen(repository: SchoolRepository) {
     }
 
     if (showDatePicker) {
-        val pickerState = rememberDatePickerState()
-        DatePickerDialog(onDismissRequest = { showDatePicker = false }, confirmButton = {
-            TextButton(onClick = { pickerState.selectedDateMillis?.let { millis -> date = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString() }; showDatePicker = false }) { Text("OK") }
-        }, dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }) { DatePicker(state = pickerState) }
+        val initialDate = when (datePickerTarget) {
+            "from" -> fromDate
+            "to" -> toDate
+            else -> date
+        }
+        val pickerState = rememberDatePickerState(initialSelectedDateMillis = runCatching {
+            LocalDate.parse(initialDate).atStartOfDay(java.time.ZoneOffset.UTC).toInstant().toEpochMilli()
+        }.getOrNull())
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    pickerState.selectedDateMillis?.let { millis ->
+                        val selected = java.time.Instant.ofEpochMilli(millis).atZone(java.time.ZoneOffset.UTC).toLocalDate().toString()
+                        when (datePickerTarget) {
+                            "from" -> fromDate = selected
+                            "to" -> toDate = selected
+                            else -> date = selected
+                        }
+                    }
+                    showDatePicker = false
+                }) { Text("OK") }
+            },
+            dismissButton = { TextButton(onClick = { showDatePicker = false }) { Text("Cancel") } }
+        ) { DatePicker(state = pickerState) }
     }
 }
 
