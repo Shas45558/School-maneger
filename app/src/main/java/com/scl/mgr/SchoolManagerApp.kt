@@ -1237,119 +1237,129 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                 }
             }
 
-            // Built-in marks keyboard. This is an app keyboard (not the Android IME),
-            // so tapping a mark box never opens the phone's normal keyboard.
-            // It appears as a bottom popup, similar to the keypad shown in the user's example.
-            if (activeStudentId != null) {
-                val activeStudent = classStudents.firstOrNull { it.id == activeStudentId }
-                ModalBottomSheet(
-                    onDismissRequest = { activeStudentId = null },
-                    dragHandle = { BottomSheetDefaults.DragHandle() }
-                ) {
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .padding(start = 12.dp, end = 12.dp, bottom = 18.dp)
-                    ) {
-                        Text(
-                            "Enter marks • ${activeStudent?.studentName ?: "Student"}",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Text(
-                            "Class $className • Section $section • ${selectedSubject.first} • 0–20",
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                        Spacer(Modifier.height(10.dp))
+            // The built-in keypad is rendered below the student list rather than as an
+            // overlay. This keeps the active marks box visible and prevents the keypad
+            // from covering the input field.
+        }
 
-                        // Large read-only display: the keypad itself is the input method.
-                        Box(
-                            Modifier
-                                .fillMaxWidth()
-                                .height(54.dp),
-                            contentAlignment = Alignment.CenterEnd
-                        ) {
+        if (activeStudentId != null) {
+            val activeStudent = classStudents.firstOrNull { it.id == activeStudentId }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 6.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(Modifier.weight(1f)) {
                             Text(
-                                text = marks[activeStudentId] ?: "",
-                                style = MaterialTheme.typography.headlineSmall,
-                                fontWeight = FontWeight.Bold
+                                "Marks • ${activeStudent?.studentName ?: "Student"}",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                maxLines = 1
+                            )
+                            Text(
+                                "${selectedSubject.first} • 0–20",
+                                style = MaterialTheme.typography.labelSmall
                             )
                         }
-                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            marks[activeStudentId] ?: "",
+                            style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp)
+                        )
+                    }
+                    Spacer(Modifier.height(5.dp))
 
-                        val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫")
-                        keys.chunked(3).forEach { row ->
-                            Row(
-                                Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                row.forEach { key ->
-                                    Button(
-                                        onClick = {
-                                            val id = activeStudentId ?: return@Button
-                                            when (key) {
-                                                "C" -> setMark(id, "")
-                                                "⌫" -> setMark(id, (marks[id] ?: "").dropLast(1))
-                                                else -> setMark(id, (marks[id] ?: "") + key)
-                                            }
-                                        },
-                                        modifier = Modifier
-                                            .weight(1f)
-                                            .height(56.dp),
-                                        shape = MaterialTheme.shapes.medium
-                                    ) {
-                                        Text(key, style = MaterialTheme.typography.titleLarge)
-                                    }
-                                }
-                            }
-                            Spacer(Modifier.height(7.dp))
-                        }
-
+                    val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫")
+                    keys.chunked(3).forEach { row ->
                         Row(
                             Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
-                            OutlinedButton(
-                                onClick = { activeStudentId = null },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .height(52.dp)
-                            ) {
-                                Text("Close")
+                            row.forEach { key ->
+                                Button(
+                                    onClick = {
+                                        val id = activeStudentId ?: return@Button
+                                        when (key) {
+                                            "C" -> setMark(id, "")
+                                            "⌫" -> setMark(id, (marks[id] ?: "").dropLast(1))
+                                            else -> setMark(id, (marks[id] ?: "") + key)
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .height(42.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    shape = MaterialTheme.shapes.small
+                                ) {
+                                    Text(key, style = MaterialTheme.typography.titleMedium)
+                                }
                             }
-                            Button(
-                                onClick = { moveToNextStudent() },
-                                modifier = Modifier
-                                    .weight(2f)
-                                    .height(52.dp)
-                            ) {
-                                Text("Enter  →  Next", style = MaterialTheme.typography.titleMedium)
-                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+
+                    Row(
+                        Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        OutlinedButton(
+                            onClick = { activeStudentId = null },
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(42.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Text("Close")
+                        }
+                        Button(
+                            onClick = { moveToNextStudent() },
+                            modifier = Modifier
+                                .weight(2f)
+                                .height(42.dp),
+                            contentPadding = PaddingValues(horizontal = 8.dp)
+                        ) {
+                            Text("Enter → Next", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
             }
         }
 
-        Spacer(Modifier.height(10.dp))
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            OutlinedButton(onClick = { if (subjectIndex > 0) subjectIndex-- }, enabled = subjectIndex > 0, modifier = Modifier.weight(1f)) { Text("Previous") }
-            Button(onClick = { saveCurrentSubject(subjectIndex < subjects.lastIndex) }, enabled = classStudents.isNotEmpty(), modifier = Modifier.weight(1.3f)) {
-                Text(if (subjectIndex < subjects.lastIndex) "Save & Next" else "Save All")
+        // Keep the main action row out of the way while the built-in keypad is open.
+        // This gives the keypad and the student list their own layout space instead of
+        // allowing anything to be covered by an overlay.
+        if (activeStudentId == null) {
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                OutlinedButton(onClick = { if (subjectIndex > 0) subjectIndex-- }, enabled = subjectIndex > 0, modifier = Modifier.weight(1f)) { Text("Previous") }
+                Button(onClick = { saveCurrentSubject(subjectIndex < subjects.lastIndex) }, enabled = classStudents.isNotEmpty(), modifier = Modifier.weight(1.3f)) {
+                    Text(if (subjectIndex < subjects.lastIndex) "Save & Next" else "Save All")
+                }
+                Button(
+                    onClick = {
+                        if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
+                            ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
+                        ) {
+                            storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                        } else {
+                            generatePdf()
+                        }
+                    },
+                    enabled = classStudents.isNotEmpty(),
+                    modifier = Modifier.weight(1f)
+                ) { Text("Generate PDF") }
             }
-            Button(
-                onClick = {
-                    if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P &&
-                        ContextCompat.checkSelfPermission(context, Manifest.permission.WRITE_EXTERNAL_STORAGE) != PackageManager.PERMISSION_GRANTED
-                    ) {
-                        storagePermissionLauncher.launch(Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    } else {
-                        generatePdf()
-                    }
-                },
-                enabled = classStudents.isNotEmpty(),
-                modifier = Modifier.weight(1f)
-            ) { Text("Generate PDF") }
         }
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 6.dp)) }
     }
