@@ -18,6 +18,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -1005,11 +1009,17 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     var showClass by remember { mutableStateOf(false) }
     var showSection by remember { mutableStateOf(false) }
     var showMonth by remember { mutableStateOf(false) }
+    var showSubject by remember { mutableStateOf(false) }
+    var activeStudentId by remember { mutableStateOf<Long?>(null) }
 
     val subjects = examSubjects(className)
     val selectedSubject = subjects.getOrNull(subjectIndex) ?: subjects.first()
     val classStudents = remember(students, className, section) {
         students.filter { it.className == className && it.section == section }
+    }
+    val listState = rememberLazyListState()
+    val focusRequesters = remember(classStudents.map { it.id }) {
+        classStudents.associate { it.id to FocusRequester() }
     }
 
     LaunchedEffect(month) {
@@ -1018,6 +1028,29 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     LaunchedEffect(className, section, month, subjectIndex, classStudents, exams) {
         marks = classStudents.associate { student ->
             student.id to (markFor(exams[student.id], selectedSubject.second)?.toString() ?: "")
+        }
+        activeStudentId = null
+    }
+
+    fun setMark(studentId: Long, value: String) {
+        val clean = value.filter(Char::isDigit).take(2)
+        if (clean.isEmpty() || (clean.toIntOrNull() ?: 0) <= 20) {
+            marks = marks + (studentId to clean)
+        }
+    }
+
+    fun moveToNextStudent() {
+        val current = activeStudentId ?: return
+        val index = classStudents.indexOfFirst { it.id == current }
+        if (index >= 0 && index < classStudents.lastIndex) {
+            val next = classStudents[index + 1]
+            activeStudentId = next.id
+            scope.launch {
+                listState.animateScrollToItem(index + 1)
+                focusRequesters[next.id]?.requestFocus()
+            }
+        } else {
+            message = "Last student reached. Press Save & Next to continue."
         }
     }
 
@@ -1032,22 +1065,41 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
             repository.saveMonthlyExams(saved)
             exams = (exams + saved.associateBy { it.studentId })
             message = "${selectedSubject.first} saved"
-            if (next && subjectIndex < subjects.lastIndex) subjectIndex++
+            if (next && subjectIndex < subjects.lastIndex) {
+                subjectIndex++
+                activeStudentId = null
+            }
         }
     }
 
     fun generatePdf() {
         scope.launch {
-            val all = repository.monthlyExamsOnce(month).associateBy { it.studentId }
-            val ordered = classStudents.sortedWith(compareBy({ it.studentId.toIntOrNull() ?: Int.MAX_VALUE }, { it.studentName.lowercase() }))
-            val file = generateMonthlyExamPdf(context, className, section, month, subjects, ordered, all)
-            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
-            val intent = Intent(Intent.ACTION_SEND).apply {
-                type = "application/pdf"
-                putExtra(Intent.EXTRA_STREAM, uri)
-                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            try {
+                message = "Creating PDF…"
+                val all = repository.monthlyExamsOnce(month).associateBy { it.studentId }
+                val ordered = classStudents.sortedWith(compareBy({ it.studentId.toIntOrNull() ?: Int.MAX_VALUE }, { it.studentName.lowercase() }))
+                val file = generateMonthlyExamPdf(context, className, section, month, subjects, ordered, all)
+                val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+
+                val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                    type = "application/pdf"
+                    putExtra(Intent.EXTRA_STREAM, uri)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+                val chooser = Intent.createChooser(shareIntent, "Share Monthly Exam PDF").apply {
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                }
+
+                try {
+                    context.startActivity(chooser)
+                    message = "PDF created successfully"
+                } catch (_: android.content.ActivityNotFoundException) {
+                    // Some devices have no PDF/share activity. The file is still safely created.
+                    message = "PDF saved: ${file.name}"
+                }
+            } catch (e: Exception) {
+                message = "PDF failed: ${e.localizedMessage ?: e.javaClass.simpleName}"
             }
-            context.startActivity(Intent.createChooser(intent, "Share Monthly Exam PDF"))
         }
     }
 
@@ -1084,14 +1136,42 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
             }
         }
 
-        Spacer(Modifier.height(12.dp))
-        Text("Subject ${subjectIndex + 1} of ${subjects.size}: ${selectedSubject.first} (0–20)", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Spacer(Modifier.height(10.dp))
+
+        // Subject selector: teacher can jump directly to any subject.
+        Box(Modifier.fillMaxWidth()) {
+            OutlinedButton(
+                onClick = { showSubject = true },
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Text("Subject: ${selectedSubject.first}")
+            }
+            DropdownMenu(showSubject, { showSubject = false }) {
+                subjects.forEachIndexed { index, subject ->
+                    DropdownMenuItem(
+                        text = { Text("${index + 1}. ${subject.first}") },
+                        onClick = {
+                            subjectIndex = index
+                            showSubject = false
+                            activeStudentId = null
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(Modifier.height(8.dp))
+        Text("Enter marks 0–20 • Tap a box to open the numeric pad", style = MaterialTheme.typography.bodySmall)
         Spacer(Modifier.height(8.dp))
 
         if (classStudents.isEmpty()) {
             Card(Modifier.fillMaxWidth()) { Text("No students found for Class $className, Section $section. Add students first.", Modifier.padding(16.dp)) }
         } else {
-            LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            LazyColumn(
+                state = listState,
+                modifier = Modifier.weight(1f),
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
                 item {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Text("Roll", Modifier.width(58.dp), fontWeight = FontWeight.Bold)
@@ -1100,20 +1180,68 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                     }
                 }
                 items(classStudents, key = { it.id }) { student ->
+                    val isActive = activeStudentId == student.id
                     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                         Text(student.studentId, Modifier.width(58.dp))
                         Text(student.studentName, Modifier.weight(1f), maxLines = 1)
                         OutlinedTextField(
                             value = marks[student.id] ?: "",
-                            onValueChange = { value ->
-                                if (value.length <= 2 && value.all(Char::isDigit) && (value.toIntOrNull() ?: 0) <= 20) {
-                                    marks = marks + (student.id to value)
-                                }
-                            },
-                            modifier = Modifier.width(100.dp),
+                            onValueChange = { value -> setMark(student.id, value) },
+                            modifier = Modifier
+                                .width(100.dp)
+                                .clickable { activeStudentId = student.id }
+                                .focusRequester(focusRequesters[student.id]!!),
                             singleLine = true,
-                            placeholder = { Text("0–20") }
+                            readOnly = true,
+                            placeholder = { Text("0–20") },
+                            label = if (isActive) ({ Text("Active") }) else null,
+                            colors = if (isActive) OutlinedTextFieldDefaults.colors(
+                                focusedBorderColor = MaterialTheme.colorScheme.primary,
+                                unfocusedBorderColor = MaterialTheme.colorScheme.primary
+                            ) else OutlinedTextFieldDefaults.colors()
                         )
+                    }
+                }
+            }
+
+            // Special in-app dial-pad style marks keyboard. It replaces the normal
+            // Android keyboard and has a dedicated Enter button that advances focus.
+            if (activeStudentId != null) {
+                Spacer(Modifier.height(8.dp))
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(8.dp)) {
+                        Text(
+                            "Marks keypad • ${classStudents.firstOrNull { it.id == activeStudentId }?.studentName ?: "Student"}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        val keys = listOf("1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "⌫")
+                        keys.chunked(3).forEach { row ->
+                            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                row.forEach { key ->
+                                    Button(
+                                        onClick = {
+                                            val id = activeStudentId ?: return@Button
+                                            when (key) {
+                                                "C" -> setMark(id, "")
+                                                "⌫" -> setMark(id, (marks[id] ?: "").dropLast(1))
+                                                else -> setMark(id, (marks[id] ?: "") + key)
+                                            }
+                                        },
+                                        modifier = Modifier.weight(1f)
+                                    ) { Text(key, style = MaterialTheme.typography.titleMedium) }
+                                }
+                            }
+                            Spacer(Modifier.height(5.dp))
+                        }
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(onClick = { activeStudentId = null }, modifier = Modifier.weight(1f)) {
+                                Text("Close")
+                            }
+                            Button(onClick = { moveToNextStudent() }, modifier = Modifier.weight(1.6f)) {
+                                Text("Enter → Next")
+                            }
+                        }
                     }
                 }
             }
@@ -1202,7 +1330,10 @@ private fun generateMonthlyExamPdf(
     val dir = File(context.getExternalFilesDir("Documents") ?: context.filesDir, "monthly_exam")
     dir.mkdirs()
     val file = File(dir, "Monthly_Exam_Class_${className}_${section}_${yearMonth}.pdf")
-    file.outputStream().use { doc.writeTo(it) }
-    doc.close()
-    return file
+    try {
+        file.outputStream().use { output -> doc.writeTo(output) }
+        return file
+    } finally {
+        doc.close()
+    }
 }
