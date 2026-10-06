@@ -283,25 +283,6 @@ private data class AttendanceGroupSummary(
 private fun DashboardScreen(repository: SchoolRepository, onStudents: () -> Unit) {
     val students by repository.students("").collectAsState(initial = emptyList())
     val totalStudents = students.size
-    var present by remember { mutableStateOf(0) }
-    var absent by remember { mutableStateOf(0) }
-    var showAttendanceDetails by remember { mutableStateOf(false) }
-    var groups by remember { mutableStateOf(emptyList<AttendanceGroupSummary>()) }
-    val today = remember { LocalDate.now().toString() }
-
-    LaunchedEffect(students, today) {
-        present = repository.presentCount(today)
-        absent = repository.absentCount(today)
-        val result = students.groupBy { it.className to it.section }.map { (key, groupStudents) ->
-            var p = 0
-            var a = 0
-            groupStudents.forEach { student ->
-                repository.attendanceForDate(student.id, today)?.let { if (it.present) p++ else a++ }
-            }
-            AttendanceGroupSummary(key.first, key.second, groupStudents.size, p, a)
-        }.sortedWith(compareBy({ it.className.toIntOrNull() ?: 999 }, { it.section }))
-        groups = result
-    }
 
     Column(Modifier.fillMaxSize().padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
         Text("Welcome to School Manager", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
@@ -313,37 +294,6 @@ private fun DashboardScreen(repository: SchoolRepository, onStudents: () -> Unit
                 Text("Manage students and attendance")
             }
         }
-
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            AttendanceCountCard("Present", present, Icons.Default.CheckCircle, Modifier.weight(1f)) { showAttendanceDetails = true }
-            AttendanceCountCard("Absent", absent, Icons.Default.Cancel, Modifier.weight(1f)) { showAttendanceDetails = true }
-        }
-        Text("Today: $today", style = MaterialTheme.typography.bodySmall)
-    }
-
-    if (showAttendanceDetails) {
-        AlertDialog(
-            onDismissRequest = { showAttendanceDetails = false },
-            title = { Text("Today's attendance by class & section") },
-            text = {
-                if (groups.isEmpty()) {
-                    Text("No students available.")
-                } else {
-                    LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        items(groups, key = { "${it.className}-${it.section}" }) { group ->
-                            Card(Modifier.fillMaxWidth()) {
-                                Column(Modifier.padding(12.dp)) {
-                                    Text("Class ${group.className} • Section ${group.section}", fontWeight = FontWeight.Bold)
-                                    Text("Total: ${group.total}")
-                                    Text("Present: ${group.present}    Absent: ${group.absent}")
-                                }
-                            }
-                        }
-                    }
-                }
-            },
-            confirmButton = { TextButton(onClick = { showAttendanceDetails = false }) { Text("Close") } }
-        )
     }
 }
 
@@ -397,15 +347,42 @@ private fun StudentsScreen(repository: SchoolRepository, onAdd: () -> Unit, onOp
 
 @Composable
 private fun StudentCard(student: Student, onClick: () -> Unit) {
+    val context = LocalContext.current
+    val callPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        if (granted && student.mobileNumber.isNotBlank()) {
+            val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${student.mobileNumber}"))
+            runCatching { context.startActivity(intent) }
+        }
+    }
+
     Card(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(student.studentName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-            Text("ID/Roll: ${student.studentId}")
-            Text("Class: ${student.className} • Section: ${student.section}")
-            if (student.gender.isNotBlank()) Text("Gender: ${student.gender}")
-            if (student.religion.isNotBlank()) Text("Religion: ${student.religion}")
-            if (student.fatherName.isNotBlank()) Text("Father: ${student.fatherName}")
-            if (student.mobileNumber.isNotBlank()) Text("Mobile: ${student.mobileNumber}")
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(student.studentName, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                Text("ID/Roll: ${student.studentId}")
+                Text("Class: ${student.className} • Section: ${student.section}")
+                if (student.gender.isNotBlank()) Text("Gender: ${student.gender}")
+                if (student.religion.isNotBlank()) Text("Religion: ${student.religion}")
+                if (student.fatherName.isNotBlank()) Text("Father: ${student.fatherName}")
+                if (student.mobileNumber.isNotBlank()) Text("Mobile: ${student.mobileNumber}")
+            }
+            if (student.mobileNumber.isNotBlank()) {
+                IconButton(onClick = {
+                    if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                        val intent = Intent(Intent.ACTION_CALL, Uri.parse("tel:${student.mobileNumber}"))
+                        runCatching { context.startActivity(intent) }
+                    } else {
+                        callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
+                    }
+                }) {
+                    Icon(Icons.Default.Call, contentDescription = "Call ${student.studentName}", modifier = Modifier.size(30.dp))
+                }
+            }
         }
     }
 }
@@ -724,7 +701,24 @@ private fun StudentDetailsScreen(
                 Text("Class: ${s.className} • Section: ${s.section}")
                 Text("Gender: ${s.gender} • Religion: ${s.religion}")
                 if (s.fatherName.isNotBlank()) Text("Father: ${s.fatherName}")
-                if (s.mobileNumber.isNotBlank()) Text("Mobile: ${s.mobileNumber}")
+                if (s.mobileNumber.isNotBlank()) {
+                    val context = LocalContext.current
+                    val callPermissionLauncher = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+                        if (granted) runCatching { context.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:${s.mobileNumber}"))) }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Mobile: ${s.mobileNumber}", modifier = Modifier.weight(1f))
+                        IconButton(onClick = {
+                            if (ContextCompat.checkSelfPermission(context, Manifest.permission.CALL_PHONE) == PackageManager.PERMISSION_GRANTED) {
+                                runCatching { context.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:${s.mobileNumber}"))) }
+                            } else {
+                                callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
+                            }
+                        }) {
+                            Icon(Icons.Default.Call, contentDescription = "Call ${s.studentName}")
+                        }
+                    }
+                }
                 if (s.address.isNotBlank()) Text("Address: ${s.address}")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = onEdit, modifier = Modifier.weight(1f)) {
