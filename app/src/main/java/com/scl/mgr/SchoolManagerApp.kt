@@ -1038,17 +1038,34 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
         }
     }
 
+    suspend fun autoSaveStudent(studentId: Long) {
+        val student = classStudents.firstOrNull { it.id == studentId } ?: return
+        val existing = exams[studentId] ?: MonthlyExam(studentId, month)
+        val raw = marks[studentId]?.trim().orEmpty()
+        val value = raw.toIntOrNull()?.coerceIn(0, 20)
+        val saved = withMark(existing, selectedSubject.second, if (raw.isBlank()) null else value)
+        repository.saveMonthlyExams(listOf(saved))
+        exams = exams + (studentId to saved)
+    }
+
     fun moveToNextStudent() {
         val current = activeStudentId ?: return
         val index = classStudents.indexOfFirst { it.id == current }
         if (index >= 0 && index < classStudents.lastIndex) {
             val next = classStudents[index + 1]
-            activeStudentId = next.id
             scope.launch {
+                // Save the current student's mark before moving to the next student.
+                autoSaveStudent(current)
+                activeStudentId = next.id
                 listState.animateScrollToItem(index + 1)
+                message = "Roll ${classStudents[index].studentId} saved"
             }
         } else {
-            message = "Last student reached. Press Save & Next to continue."
+            scope.launch {
+                // Also save the last student's mark when Enter is pressed.
+                autoSaveStudent(current)
+                message = "Roll ${classStudents[index].studentId} saved"
+            }
         }
     }
 
@@ -1205,7 +1222,18 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                             modifier = Modifier
                                 .width(100.dp)
                                 .height(56.dp)
-                                .clickable { activeStudentId = student.id },
+                                .clickable {
+                                    val previous = activeStudentId
+                                    if (previous != null && previous != student.id) {
+                                        scope.launch {
+                                            // Save the previous student's mark before opening another box.
+                                            autoSaveStudent(previous)
+                                            activeStudentId = student.id
+                                        }
+                                    } else {
+                                        activeStudentId = student.id
+                                    }
+                                },
                             shape = MaterialTheme.shapes.small,
                             border = BorderStroke(
                                 width = if (isActive) 2.dp else 1.dp,
