@@ -13,6 +13,7 @@ import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
 import androidx.core.content.ContextCompat
 import java.io.File
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
@@ -1014,6 +1015,12 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     var showSubject by remember { mutableStateOf(false) }
     var activeStudentId by remember { mutableStateOf<Long?>(null) }
     var pendingPdfAfterPermission by rememberSaveable { mutableStateOf(false) }
+
+    // When the custom marks keypad is open, the Android Back button should
+    // close only the keypad instead of closing the Monthly Exam drawer/page.
+    BackHandler(enabled = activeStudentId != null) {
+        activeStudentId = null
+    }
 
     val subjects = examSubjects(className)
     val selectedSubject = subjects.getOrNull(subjectIndex) ?: subjects.first()
