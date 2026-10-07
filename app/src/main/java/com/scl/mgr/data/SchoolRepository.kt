@@ -21,6 +21,7 @@ class SchoolRepository(private val db: AppDatabase, private val context: Context
     suspend fun deleteStudent(student: Student) {
         db.attendanceDao().deleteForStudent(student.id)
         db.monthlyExamDao().deleteForStudent(student.id)
+        db.examMarkDao().deleteForStudent(student.id)
         db.studentDao().delete(student)
     }
 
@@ -53,6 +54,13 @@ class SchoolRepository(private val db: AppDatabase, private val context: Context
     }
 
     suspend fun monthlyExamsOnce(yearMonth: String): List<MonthlyExam> = db.monthlyExamDao().getForMonth(yearMonth)
+
+    suspend fun examMarksOnce(examType: String): List<ExamMark> = db.examMarkDao().getForExam(examType)
+
+    suspend fun saveExamMarks(marks: List<ExamMark>) {
+        db.examMarkDao().upsertAll(marks)
+        SyncScheduler.scheduleChangeSync(context)
+    }
 
     suspend fun studentAbsentCountBetween(studentId: Long, startDate: String, endDate: String): Int = db.attendanceDao().studentAbsentCountBetween(studentId, startDate, endDate)
 }

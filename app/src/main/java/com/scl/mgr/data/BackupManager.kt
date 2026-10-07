@@ -50,11 +50,13 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
             val remoteStudents = remoteDb.studentDao().getAllOnce()
             val remoteAttendance = remoteDb.attendanceDao().getAllOnce()
             val remoteMonthlyExams = remoteDb.monthlyExamDao().getAllOnce()
+            val remoteExamMarks = remoteDb.examMarkDao().getAllOnce()
             val localByKey = db.studentDao().getAllOnce().associateBy { key(it) }.toMutableMap()
             val idMap = mutableMapOf<Long, Long>()
             var addedStudents = 0
             var addedAttendance = 0
             var addedMonthlyExams = 0
+            var addedExamMarks = 0
 
             for (remoteStudent in remoteStudents) {
                 val existing = localByKey[key(remoteStudent)]
@@ -108,7 +110,20 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
                 db.monthlyExamDao().upsert(mergedExam)
             }
 
-            MergeResult(addedStudents, addedAttendance, addedMonthlyExams)
+            val localExamMarks = db.examMarkDao().getAllOnce().associateBy { Triple(it.studentId, it.examType, it.subjectKey) }
+            for (remoteMark in remoteExamMarks) {
+                val localStudentId = idMap[remoteMark.studentId] ?: continue
+                val key = Triple(localStudentId, remoteMark.examType, remoteMark.subjectKey)
+                if (key !in localExamMarks) {
+                    db.examMarkDao().upsert(remoteMark.copy(studentId = localStudentId))
+                    addedExamMarks++
+                } else {
+                    val local = localExamMarks[key]!!
+                    db.examMarkDao().upsert(local.copy(cq = local.cq ?: remoteMark.cq, mcq = local.mcq ?: remoteMark.mcq))
+                }
+            }
+
+            MergeResult(addedStudents, addedAttendance, addedMonthlyExams, addedExamMarks)
         } finally {
             remoteDb.close()
             tempFile.delete()
@@ -123,6 +138,7 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
     data class MergeResult(
         val studentsAdded: Int,
         val attendanceAdded: Int,
-        val monthlyExamsAdded: Int = 0
+        val monthlyExamsAdded: Int = 0,
+        val examMarksAdded: Int = 0
     )
 }

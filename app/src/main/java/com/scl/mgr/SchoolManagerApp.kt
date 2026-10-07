@@ -49,6 +49,7 @@ import com.scl.mgr.data.AutoSyncWorker
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import com.scl.mgr.data.MonthlyExam
+import com.scl.mgr.data.ExamMark
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
@@ -79,7 +80,7 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
             DrawerItem("subjects", "Subjects", Icons.Default.MenuBook, true),
             DrawerItem("attendance", "Attendance", Icons.Default.CheckCircle),
             DrawerItem("monthly_exam", "Monthly Exam", Icons.Default.Assignment),
-            DrawerItem("exams", "Exams & Results", Icons.Default.Assignment, true),
+            DrawerItem("exams", "Exams & Results", Icons.Default.Assignment, false),
             DrawerItem("fees", "Fees & Payments", Icons.Default.AccountBalanceWallet, true),
             DrawerItem("notices", "Notices", Icons.Default.Notifications, true),
             DrawerItem("events", "Events", Icons.Default.Event, true),
@@ -199,6 +200,11 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
             composable("monthly_exam") {
                 AppScaffold("Monthly Exam", drawerState, scope) {
                     MonthlyExamScreen(repository)
+                }
+            }
+            composable("exams") {
+                AppScaffold("Exams & Results", drawerState, scope) {
+                    ExamResultsScreen(repository)
                 }
             }
             composable("student/add") {
@@ -943,6 +949,152 @@ private fun AboutScreen() {
     }
 }
 
+
+private data class ExamSubjectSpec(val name: String, val key: String, val max: Int)
+
+private val CLASS_6_8_EXAM_SUBJECTS = listOf(
+    ExamSubjectSpec("Bangla 1st Paper", "bangla1", 100),
+    ExamSubjectSpec("Bangla 2nd Paper", "bangla2", 40),
+    ExamSubjectSpec("English 1st Paper", "english1", 40),
+    ExamSubjectSpec("English 2nd Paper", "english2", 40),
+    ExamSubjectSpec("Mathematics", "math", 100),
+    ExamSubjectSpec("Social Sciences", "social", 100),
+    ExamSubjectSpec("Science", "science", 100),
+    ExamSubjectSpec("Religion", "religion", 100),
+    ExamSubjectSpec("ICT", "ict", 20),
+    ExamSubjectSpec("Agriculture", "agriculture", 16),
+    ExamSubjectSpec("Oral", "oral", 20)
+)
+
+private fun gradeForExam(total: Int, max: Int): String {
+    if (total <= 0) return "F"
+    val p = total * 100.0 / max.coerceAtLeast(1)
+    return when { p >= 80 -> "A+"; p >= 70 -> "A"; p >= 60 -> "A-"; p >= 50 -> "B"; p >= 40 -> "C"; p >= 33 -> "D"; else -> "F" }
+}
+
+private fun gradePointForExam(total: Int, max: Int): Double = when (gradeForExam(total, max)) {
+    "A+" -> 5.0; "A" -> 4.0; "A-" -> 3.5; "B" -> 3.0; "C" -> 2.0; "D" -> 1.0; else -> 0.0
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ExamResultsScreen(repository: SchoolRepository) {
+    val scope = rememberCoroutineScope()
+    val students by repository.students("").collectAsState(initial = emptyList())
+    var examType by rememberSaveable { mutableStateOf("Annual Exam") }
+    var className by rememberSaveable { mutableStateOf("6") }
+    var section by rememberSaveable { mutableStateOf("A") }
+    var subjectIndex by rememberSaveable { mutableIntStateOf(0) }
+    var tab by rememberSaveable { mutableIntStateOf(0) }
+    var marks by remember { mutableStateOf<Map<Long, Pair<String, String>>>(emptyMap()) }
+    var allMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
+    var message by remember { mutableStateOf<String?>(null) }
+    var showExamType by remember { mutableStateOf(false) }
+    var showClass by remember { mutableStateOf(false) }
+    var showSection by remember { mutableStateOf(false) }
+    var showSubject by remember { mutableStateOf(false) }
+
+    val subjects = CLASS_6_8_EXAM_SUBJECTS
+    val subject = subjects[subjectIndex.coerceIn(0, subjects.lastIndex)]
+    val classStudents = remember(students, className, section) { students.filter { it.className == className && it.section == section }.sortedBy { it.studentId.toIntOrNull() ?: Int.MAX_VALUE } }
+
+    LaunchedEffect(examType, className, section, subjectIndex, classStudents) {
+        val existing = repository.examMarksOnce(examType)
+        allMarks = existing
+        val byStudent = existing.filter { it.subjectKey == subject.key }.associate { it.studentId to it }
+        marks = classStudents.associate { st ->
+            val m = byStudent[st.id]
+            st.id to (m?.cq?.toString().orEmpty() to m?.mcq?.toString().orEmpty())
+        }
+    }
+
+    fun update(studentId: Long, cq: String? = null, mcq: String? = null) {
+        val old = marks[studentId] ?: ("" to "")
+        val next = (cq ?: old.first).filter(Char::isDigit).take(3) to (mcq ?: old.second).filter(Char::isDigit).take(3)
+        val cqN = next.first.toIntOrNull() ?: 0
+        val mcqN = next.second.toIntOrNull() ?: 0
+        if (cqN + mcqN <= subject.max) marks = marks + (studentId to next)
+    }
+
+    fun saveAll() {
+        scope.launch {
+            val saved = classStudents.mapNotNull { st ->
+                val v = marks[st.id] ?: return@mapNotNull null
+                if (v.first.isBlank() && v.second.isBlank()) return@mapNotNull null
+                ExamMark(st.id, examType, subject.key, v.first.toIntOrNull(), v.second.toIntOrNull())
+            }
+            if (saved.isNotEmpty()) repository.saveExamMarks(saved)
+            allMarks = repository.examMarksOnce(examType)
+            message = "${subject.name} marks saved"
+        }
+    }
+
+    Column(Modifier.fillMaxSize().padding(16.dp)) {
+        Text("Classes 6–8 Exam & Results", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Spacer(Modifier.height(10.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+            Box(Modifier.weight(1f)) { OutlinedButton({ showExamType = true }, Modifier.fillMaxWidth()) { Text(examType) } }
+            Box(Modifier.weight(.7f)) { OutlinedButton({ showClass = true }, Modifier.fillMaxWidth()) { Text("Class $className") } }
+            Box(Modifier.weight(.6f)) { OutlinedButton({ showSection = true }, Modifier.fillMaxWidth()) { Text("Sec $section") } }
+        }
+        Spacer(Modifier.height(8.dp))
+        TabRow(selectedTabIndex = tab) { Tab(tab == 0, { tab = 0 }, text = { Text("Enter Marks") }); Tab(tab == 1, { tab = 1 }, text = { Text("Results") }) }
+        Spacer(Modifier.height(8.dp))
+        if (tab == 0) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("Subject: ${subject.name} (Max ${subject.max})", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
+                OutlinedButton({ showSubject = true }) { Text("Select") }
+            }
+            Text("Enter CQ and MCQ. Total is calculated automatically.", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+            LazyColumn(Modifier.weight(1f)) {
+                items(classStudents, key = { it.id }) { st ->
+                    val v = marks[st.id] ?: ("" to "")
+                    val total = (v.first.toIntOrNull() ?: 0) + (v.second.toIntOrNull() ?: 0)
+                    Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1.3f)) { Text("Roll ${st.studentId}", fontWeight = FontWeight.Bold); Text(st.name, maxLines = 1) }
+                        OutlinedTextField(v.first, { update(st.id, cq = it) }, Modifier.width(86.dp), label = { Text("CQ") }, singleLine = true)
+                        Spacer(Modifier.width(5.dp))
+                        OutlinedTextField(v.second, { update(st.id, mcq = it) }, Modifier.width(86.dp), label = { Text("MCQ") }, singleLine = true)
+                        Spacer(Modifier.width(5.dp))
+                        Text("$total", modifier = Modifier.width(38.dp), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+            Button({ saveAll() }, Modifier.fillMaxWidth(), enabled = classStudents.isNotEmpty()) { Text("Save & Next Subject") }
+        } else {
+            val byStudent = allMarks.groupBy { it.studentId }
+            LazyColumn(Modifier.weight(1f)) {
+                item {
+                    Text("${examType} — Class $className$section", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                }
+                items(classStudents, key = { it.id }) { st ->
+                    val sm = byStudent[st.id].orEmpty().associateBy { it.subjectKey }
+                    val totals = subjects.map { sp -> val m=sm[sp.key]; ((m?.cq ?: 0)+(m?.mcq ?: 0)) to sp }
+                    val grand = totals.sumOf { it.first }; val max = totals.sumOf { it.second.max }
+                    val fail = totals.count { gradeForExam(it.first, it.second.max) == "F" }
+                    val gp = if (fail > 0) 0.0 else totals.map { gradePointForExam(it.first, it.second.max) }.average()
+                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Column(Modifier.padding(10.dp)) {
+                        Text("${st.studentId} — ${st.name}", fontWeight = FontWeight.Bold)
+                        Text("Total: $grand / $max   Average: ${if(max>0) String.format("%.1f", grand*100.0/max) else "0.0"}%   GPA: ${String.format("%.2f", gp)}   Fail: $fail")
+                        Text(totals.joinToString("  |  ") { "${it.second.name.take(5)}: ${it.first} (${gradeForExam(it.first,it.second.max)})" }, style=MaterialTheme.typography.bodySmall)
+                    } }
+                }
+            }
+        }
+        message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+    }
+    if (showExamType) { DropdownDialog("Exam", listOf("Annual Exam","1st Term","2nd Term","First Term","Second Term"), { examType=it; showExamType=false }, { showExamType=false }) }
+    if (showClass) { DropdownDialog("Class", listOf("6","7","8"), { className=it; subjectIndex=0; showClass=false }, { showClass=false }) }
+    if (showSection) { DropdownDialog("Section", listOf("A","B"), { section=it; showSection=false }, { showSection=false }) }
+    if (showSubject) { DropdownDialog("Subject", subjects.map { it.name }, { v -> subjectIndex=subjects.indexOfFirst { it.name==v }.coerceAtLeast(0); showSubject=false }, { showSubject=false }) }
+}
+
+@Composable
+private fun DropdownDialog(title: String, values: List<String>, onSelect: (String) -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(onDismissRequest = onDismiss, title = { Text(title) }, text = { Column { values.forEach { v -> TextButton({ onSelect(v) }, Modifier.fillMaxWidth()) { Text(v) } } } }, confirmButton = {})
+}
 
 private val LOWER_EXAM_SUBJECTS = listOf(
     "Bangla" to "bangla",
