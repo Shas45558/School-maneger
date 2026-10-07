@@ -1052,7 +1052,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     val v = marks[st.id] ?: ("" to "")
                     val total = (v.first.toIntOrNull() ?: 0) + (v.second.toIntOrNull() ?: 0)
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1.3f)) { Text("Roll ${st.studentId}", fontWeight = FontWeight.Bold); Text(st.name, maxLines = 1) }
+                        Column(Modifier.weight(1.3f)) { Text("Roll ${st.studentId}", fontWeight = FontWeight.Bold); Text(st.studentName, maxLines = 1) }
                         OutlinedTextField(v.first, { update(st.id, cq = it) }, Modifier.width(86.dp), label = { Text("CQ") }, singleLine = true)
                         Spacer(Modifier.width(5.dp))
                         OutlinedTextField(v.second, { update(st.id, mcq = it) }, Modifier.width(86.dp), label = { Text("MCQ") }, singleLine = true)
@@ -1076,7 +1076,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     val fail = totals.count { gradeForExam(it.first, it.second.max) == "F" }
                     val gp = if (fail > 0) 0.0 else totals.map { gradePointForExam(it.first, it.second.max) }.average()
                     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Column(Modifier.padding(10.dp)) {
-                        Text("${st.studentId} — ${st.name}", fontWeight = FontWeight.Bold)
+                        Text("${st.studentId} — ${st.studentName}", fontWeight = FontWeight.Bold)
                         Text("Total: $grand / $max   Average: ${if(max>0) String.format("%.1f", grand*100.0/max) else "0.0"}%   GPA: ${String.format("%.2f", gp)}   Fail: $fail")
                         Text(totals.joinToString("  |  ") { "${it.second.name.take(5)}: ${it.first} (${gradeForExam(it.first,it.second.max)})" }, style=MaterialTheme.typography.bodySmall)
                     } }
