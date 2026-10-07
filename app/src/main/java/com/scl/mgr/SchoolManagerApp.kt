@@ -1015,6 +1015,10 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     var showSubject by remember { mutableStateOf(false) }
     var activeStudentId by remember { mutableStateOf<Long?>(null) }
     var pendingPdfAfterPermission by rememberSaveable { mutableStateOf(false) }
+    var showPdfSettings by remember { mutableStateOf(false) }
+    var pdfOrientation by rememberSaveable { mutableStateOf(PdfOrientation.LANDSCAPE) }
+    var pdfPageSize by rememberSaveable { mutableStateOf(PdfPageSize.A4) }
+    var pdfTableLayout by rememberSaveable { mutableStateOf(PdfTableLayout.SUBJECTS_AS_COLUMNS) }
 
     // When the custom marks keypad is open, the Android Back button should
     // close only the keypad instead of closing the Monthly Exam drawer/page.
@@ -1116,7 +1120,18 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
                 message = "Creating PDF…"
                 val all = repository.monthlyExamsOnce(month).associateBy { it.studentId }
                 val ordered = classStudents.sortedWith(compareBy({ it.studentId.toIntOrNull() ?: Int.MAX_VALUE }, { it.studentName.lowercase() }))
-                val result = generateMonthlyExamPdf(context, className, section, month, subjects, ordered, all)
+                val result = generateMonthlyExamPdf(
+                    context = context,
+                    className = className,
+                    section = section,
+                    yearMonth = month,
+                    subjects = subjects,
+                    students = ordered,
+                    exams = all,
+                    pageSize = pdfPageSize,
+                    orientation = pdfOrientation,
+                    tableLayout = pdfTableLayout
+                )
 
                 val shareIntent = Intent(Intent.ACTION_SEND).apply {
                     type = "application/pdf"
@@ -1371,6 +1386,44 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
             }
         }
 
+        if (activeStudentId == null) {
+            OutlinedButton(
+                onClick = { showPdfSettings = true },
+                modifier = Modifier.fillMaxWidth(),
+                contentPadding = PaddingValues(vertical = 8.dp)
+            ) {
+                Text("PDF: ${pdfPageSize.label} • ${pdfOrientation.label} • ${pdfTableLayout.label}")
+            }
+        }
+
+        if (showPdfSettings) {
+            AlertDialog(
+                onDismissRequest = { showPdfSettings = false },
+                title = { Text("PDF Settings") },
+                text = {
+                    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text("Page size", fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PdfOptionButton("A4", pdfPageSize == PdfPageSize.A4) { pdfPageSize = PdfPageSize.A4 }
+                            PdfOptionButton("Letter", pdfPageSize == PdfPageSize.LETTER) { pdfPageSize = PdfPageSize.LETTER }
+                            PdfOptionButton("Legal", pdfPageSize == PdfPageSize.LEGAL) { pdfPageSize = PdfPageSize.LEGAL }
+                        }
+                        Text("Orientation", fontWeight = FontWeight.Bold)
+                        Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            PdfOptionButton("Portrait", pdfOrientation == PdfOrientation.PORTRAIT) { pdfOrientation = PdfOrientation.PORTRAIT }
+                            PdfOptionButton("Landscape", pdfOrientation == PdfOrientation.LANDSCAPE) { pdfOrientation = PdfOrientation.LANDSCAPE }
+                        }
+                        Text("Table / row type", fontWeight = FontWeight.Bold)
+                        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                            PdfOptionButton("Subjects in columns (wide)", pdfTableLayout == PdfTableLayout.SUBJECTS_AS_COLUMNS) { pdfTableLayout = PdfTableLayout.SUBJECTS_AS_COLUMNS }
+                            PdfOptionButton("Subjects in rows (one column)", pdfTableLayout == PdfTableLayout.SUBJECTS_AS_ROWS) { pdfTableLayout = PdfTableLayout.SUBJECTS_AS_ROWS }
+                        }
+                    }
+                },
+                confirmButton = { Button(onClick = { showPdfSettings = false }) { Text("Done") } }
+            )
+        }
+
         // Keep the main action row out of the way while the built-in keypad is open.
         // This gives the keypad and the student list their own layout space instead of
         // allowing anything to be covered by an overlay.
@@ -1400,6 +1453,19 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     }
 }
 
+private enum class PdfOrientation(val label: String) { PORTRAIT("Portrait"), LANDSCAPE("Landscape") }
+private enum class PdfPageSize(val label: String) { A4("A4"), LETTER("Letter"), LEGAL("Legal") }
+private enum class PdfTableLayout(val label: String) { SUBJECTS_AS_COLUMNS("Subjects in columns"), SUBJECTS_AS_ROWS("Subjects in rows") }
+
+@Composable
+private fun PdfOptionButton(label: String, selected: Boolean, onClick: () -> Unit) {
+    if (selected) {
+        Button(onClick = onClick, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)) { Text(label) }
+    } else {
+        OutlinedButton(onClick = onClick, contentPadding = PaddingValues(horizontal = 10.dp, vertical = 5.dp)) { Text(label) }
+    }
+}
+
 private data class PdfOutput(val uri: Uri, val fileName: String)
 
 private fun generateMonthlyExamPdf(
@@ -1409,71 +1475,157 @@ private fun generateMonthlyExamPdf(
     yearMonth: String,
     subjects: List<Pair<String, String>>,
     students: List<Student>,
-    exams: Map<Long, MonthlyExam>
+    exams: Map<Long, MonthlyExam>,
+    pageSize: PdfPageSize,
+    orientation: PdfOrientation,
+    tableLayout: PdfTableLayout
 ): PdfOutput {
     val doc = PdfDocument()
-    val pageWidth = 842
-    val pageHeight = 595
-    val margin = 24f
+    val base = when (pageSize) {
+        PdfPageSize.A4 -> 595 to 842
+        PdfPageSize.LETTER -> 612 to 792
+        PdfPageSize.LEGAL -> 612 to 1008
+    }
+    val pageWidth = if (orientation == PdfOrientation.LANDSCAPE) maxOf(base.first, base.second) else minOf(base.first, base.second)
+    val pageHeight = if (orientation == PdfOrientation.LANDSCAPE) minOf(base.first, base.second) else maxOf(base.first, base.second)
+    val margin = 28f
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK }
-    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 20f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
-    val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 9f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val titlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 18f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+    val headerPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 8.5f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
     val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 8f }
+    val smallPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = android.graphics.Color.BLACK; textSize = 7f }
     val totalMax = subjects.size * 20
     val monthTitle = try { YearMonth.parse(yearMonth).format(DateTimeFormatter.ofPattern("MMMM yyyy")) } catch (_: Exception) { yearMonth }
-    val columns = listOf("Roll", "Student") + subjects.map { it.first } + "Total"
-    val widths = mutableListOf(42f, 145f).apply { repeat(subjects.size) { add(60f) }; add(55f) }
     var pageNumber = 0
-    var index = 0
-    while (index < students.size || students.isEmpty() && pageNumber == 0) {
+
+    fun newPage(): Pair<PdfDocument.Page, Float> {
         pageNumber++
         val page = doc.startPage(PdfDocument.PageInfo.Builder(pageWidth, pageHeight, pageNumber).create())
         val c = page.canvas
         c.drawText("School Manager", margin, 30f, titlePaint)
-        c.drawText("Monthly Examination — Class $className, Section $section — $monthTitle", margin, 50f, textPaint)
-        c.drawText("Maximum: $totalMax", pageWidth - 105f, 50f, headerPaint)
-        var x = margin
-        var y = 70f
-        paint.style = Paint.Style.STROKE
-        c.drawRect(margin, y, pageWidth - margin, y + 24f, paint)
-        columns.forEachIndexed { i, name ->
-            c.drawText(name, x + 3f, y + 16f, headerPaint)
-            x += widths[i]
-            if (i < columns.lastIndex) c.drawLine(x, y, x, y + 24f, paint)
-        }
-        paint.style = Paint.Style.FILL
-        y += 24f
-        val rowHeight = 22f
-        while (index < students.size && y + rowHeight < pageHeight - 40f) {
-            val s = students[index]
-            val e = exams[s.id]
-            x = margin
-            paint.style = Paint.Style.STROKE
-            c.drawRect(margin, y, pageWidth - margin, y + rowHeight, paint)
-            paint.style = Paint.Style.FILL
-            val values = mutableListOf(s.studentId, s.studentName)
-            val marks = subjects.map { markFor(e, it.second) }
-            val total = marks.filterNotNull().sum()
-            values.addAll(marks.map { it?.toString() ?: "" })
-            values.add(if (marks.any { it != null }) total.toString() else "")
-            values.forEachIndexed { i, value ->
-                c.drawText(value.take(if (i == 1) 24 else 11), x + 3f, y + 15f, textPaint)
-                x += widths[i]
-                if (i < values.lastIndex) c.drawLine(x, y, x, y + rowHeight, paint)
-            }
-            y += rowHeight
-            index++
-        }
-        c.drawText("Page $pageNumber", pageWidth - 70f, pageHeight - 18f, textPaint)
-        doc.finishPage(page)
-        if (students.isEmpty()) break
+        c.drawText("Monthly Examination Result", margin, 48f, headerPaint)
+        c.drawText("Class $className • Section $section • $monthTitle", margin, 62f, textPaint)
+        c.drawText("Maximum: $totalMax", pageWidth - 90f, 62f, headerPaint)
+        c.drawLine(margin, 70f, pageWidth - margin, 70f, paint)
+        return page to 82f
     }
 
-    val fileName = "Monthly_Exam_Class_${className}_${section}_${yearMonth}.pdf"
+    fun drawFooter(canvas: android.graphics.Canvas) {
+        canvas.drawText("Page $pageNumber", pageWidth - 62f, pageHeight - 14f, smallPaint)
+    }
+
+    if (tableLayout == PdfTableLayout.SUBJECTS_AS_COLUMNS) {
+        val columns = listOf("Roll", "Student") + subjects.map { it.first } + "Total"
+        val usable = pageWidth - margin * 2
+        val rollW = 42f
+        val totalW = 48f
+        val studentW = if (orientation == PdfOrientation.LANDSCAPE) 150f else 105f
+        val remaining = (usable - rollW - studentW - totalW).coerceAtLeast(1f)
+        val subjectW = remaining / subjects.size.coerceAtLeast(1)
+        val widths = mutableListOf(rollW, studentW).apply { repeat(subjects.size) { add(subjectW) }; add(totalW) }
+        var index = 0
+        while (index < students.size || students.isEmpty() && pageNumber == 0) {
+            val (page, startY) = newPage()
+            val c = page.canvas
+            var y = startY
+            val headerH = 25f
+            paint.style = Paint.Style.STROKE
+            c.drawRect(margin, y, pageWidth - margin, y + headerH, paint)
+            var x = margin
+            columns.forEachIndexed { i, name ->
+                c.drawText(name, x + 3f, y + 16f, headerPaint)
+                x += widths[i]
+                if (i < columns.lastIndex) c.drawLine(x, y, x, y + headerH, paint)
+            }
+            y += headerH
+            val rowH = 22f
+            while (index < students.size && y + rowH < pageHeight - 34f) {
+                val s = students[index]
+                val e = exams[s.id]
+                val marks = subjects.map { markFor(e, it.second) }
+                val total = marks.filterNotNull().sum()
+                val values = listOf(s.studentId, s.studentName) + marks.map { it?.toString() ?: "" } + if (marks.any { it != null }) total.toString() else ""
+                x = margin
+                c.drawRect(margin, y, pageWidth - margin, y + rowH, paint)
+                values.forEachIndexed { i, value ->
+                    c.drawText(value.take(if (i == 1) 25 else 10), x + 3f, y + 15f, textPaint)
+                    x += widths[i]
+                    if (i < values.lastIndex) c.drawLine(x, y, x, y + rowH, paint)
+                }
+                y += rowH
+                index++
+            }
+            paint.style = Paint.Style.FILL
+            drawFooter(c)
+            doc.finishPage(page)
+            if (students.isEmpty()) break
+        }
+    } else {
+        // Vertical/one-column mode: each student gets a compact block and all subjects
+        // are listed vertically, which is easier to print on portrait pages.
+        var index = 0
+        while (index < students.size || students.isEmpty() && pageNumber == 0) {
+            val (page, startY) = newPage()
+            val c = page.canvas
+            var y = startY
+            while (index < students.size) {
+                val s = students[index]
+                val e = exams[s.id]
+                val marks = subjects.map { markFor(e, it.second) }
+                val total = marks.filterNotNull().sum()
+                val blockH = 24f + subjects.size * 20f + 24f
+                if (y + blockH > pageHeight - 34f && y > startY) break
+                paint.style = Paint.Style.STROKE
+                c.drawRect(margin, y, pageWidth - margin, y + 24f, paint)
+                paint.style = Paint.Style.FILL
+                c.drawText("Roll: ${s.studentId}", margin + 5f, y + 16f, headerPaint)
+                c.drawText("Name: ${s.studentName.take(40)}", margin + 100f, y + 16f, headerPaint)
+                y += 24f
+                subjects.forEachIndexed { i, subject ->
+                    paint.style = Paint.Style.STROKE
+                    c.drawRect(margin, y, pageWidth - margin, y + 20f, paint)
+                    paint.style = Paint.Style.FILL
+                    c.drawText("${i + 1}. ${subject.first}", margin + 6f, y + 14f, textPaint)
+                    c.drawText(markFor(e, subject.second)?.toString() ?: "", pageWidth / 2f, y + 14f, textPaint)
+                    y += 20f
+                }
+                paint.style = Paint.Style.STROKE
+                c.drawRect(margin, y, pageWidth - margin, y + 24f, paint)
+                paint.style = Paint.Style.FILL
+                c.drawText("Total: ${if (marks.any { it != null }) total else ""} / $totalMax", margin + 6f, y + 16f, headerPaint)
+                y += 30f
+                index++
+            }
+            paint.style = Paint.Style.FILL
+            drawFooter(c)
+            doc.finishPage(page)
+            if (students.isEmpty()) break
+        }
+    }
+
+    // Dedicated signature page keeps the signature area clean even when the result table
+    // spans multiple pages.
+    run {
+        val (page, startY) = newPage()
+        val c = page.canvas
+        val y = maxOf(startY + 80f, pageHeight.toFloat() - 130f)
+        paint.style = Paint.Style.STROKE
+        val left = margin + 45f
+        val right = pageWidth - margin - 45f
+        c.drawLine(left, y, left + 170f, y, paint)
+        c.drawLine(right - 170f, y, right, y, paint)
+        paint.style = Paint.Style.FILL
+        c.drawText("Class Teacher", left + 42f, y + 18f, headerPaint)
+        c.drawText("Head Teacher", right - 125f, y + 18f, headerPaint)
+        c.drawText("Signature / Date", left + 45f, y + 32f, smallPaint)
+        c.drawText("Signature / Date", right - 125f, y + 32f, smallPaint)
+        drawFooter(c)
+        doc.finishPage(page)
+    }
+
+    val fileName = "Monthly_Exam_Class_${className}_${section}_${yearMonth}_${pageSize.label}_${orientation.label}.pdf"
     return try {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            // Android 10+: MediaStore can create a real public Downloads file without
-            // broad storage permission, using scoped storage correctly.
             val values = android.content.ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, fileName)
                 put(MediaStore.Downloads.MIME_TYPE, "application/pdf")
@@ -1486,20 +1638,16 @@ private fun generateMonthlyExamPdf(
             try {
                 resolver.openOutputStream(uri)?.use { output -> doc.writeTo(output) }
                     ?: throw java.io.IOException("Unable to open PDF output stream")
-                val done = android.content.ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }
-                resolver.update(uri, done, null, null)
+                resolver.update(uri, android.content.ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
                 PdfOutput(uri, fileName)
             } catch (e: Exception) {
                 resolver.delete(uri, null, null)
                 throw e
             }
         } else {
-            // Android 8/9: public Downloads requires WRITE_EXTERNAL_STORAGE permission.
             val downloads = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
             val dir = File(downloads, "School Manager")
-            if (!dir.exists() && !dir.mkdirs()) {
-                throw java.io.IOException("Unable to create Downloads/School Manager")
-            }
+            if (!dir.exists() && !dir.mkdirs()) throw java.io.IOException("Unable to create Downloads/School Manager")
             val file = File(dir, fileName)
             file.outputStream().use { output -> doc.writeTo(output) }
             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
