@@ -49,10 +49,12 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
         try {
             val remoteStudents = remoteDb.studentDao().getAllOnce()
             val remoteAttendance = remoteDb.attendanceDao().getAllOnce()
+            val remoteMonthlyExams = remoteDb.monthlyExamDao().getAllOnce()
             val localByKey = db.studentDao().getAllOnce().associateBy { key(it) }.toMutableMap()
             val idMap = mutableMapOf<Long, Long>()
             var addedStudents = 0
             var addedAttendance = 0
+            var addedMonthlyExams = 0
 
             for (remoteStudent in remoteStudents) {
                 val existing = localByKey[key(remoteStudent)]
@@ -76,7 +78,37 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
                     addedAttendance++
                 }
             }
-            MergeResult(addedStudents, addedAttendance)
+            // Merge monthly exam marks by student + month. When both devices have
+            // a record, keep every locally-entered subject mark and fill any
+            // missing subject from Drive. This prevents pressing Enter on one
+            // subject from overwriting marks saved by another device.
+            val localExams = db.monthlyExamDao().getAllOnce()
+                .associateBy { it.studentId to it.yearMonth }
+            for (remoteExam in remoteMonthlyExams) {
+                val localStudentId = idMap[remoteExam.studentId] ?: continue
+                val key = localStudentId to remoteExam.yearMonth
+                val localExam = localExams[key]
+                val mergedExam = if (localExam == null) {
+                    addedMonthlyExams++
+                    remoteExam.copy(studentId = localStudentId)
+                } else {
+                    localExam.copy(
+                        bangla = localExam.bangla ?: remoteExam.bangla,
+                        english = localExam.english ?: remoteExam.english,
+                        math = localExam.math ?: remoteExam.math,
+                        socialScience = localExam.socialScience ?: remoteExam.socialScience,
+                        science = localExam.science ?: remoteExam.science,
+                        religion = localExam.religion ?: remoteExam.religion,
+                        physics = localExam.physics ?: remoteExam.physics,
+                        chemistry = localExam.chemistry ?: remoteExam.chemistry,
+                        biology = localExam.biology ?: remoteExam.biology,
+                        hMOrAgri = localExam.hMOrAgri ?: remoteExam.hMOrAgri
+                    )
+                }
+                db.monthlyExamDao().upsert(mergedExam)
+            }
+
+            MergeResult(addedStudents, addedAttendance, addedMonthlyExams)
         } finally {
             remoteDb.close()
             tempFile.delete()
@@ -88,5 +120,9 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
     private fun key(s: Student): String =
         "${s.className.trim().uppercase()}|${s.section.trim().uppercase()}|${s.studentId.trim()}"
 
-    data class MergeResult(val studentsAdded: Int, val attendanceAdded: Int)
+    data class MergeResult(
+        val studentsAdded: Int,
+        val attendanceAdded: Int,
+        val monthlyExamsAdded: Int = 0
+    )
 }

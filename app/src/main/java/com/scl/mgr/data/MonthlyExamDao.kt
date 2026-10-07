@@ -13,6 +13,9 @@ interface MonthlyExamDao {
     @Query("SELECT * FROM monthly_exams WHERE yearMonth = :yearMonth")
     suspend fun getForMonth(yearMonth: String): List<MonthlyExam>
 
+    @Query("SELECT * FROM monthly_exams")
+    suspend fun getAllOnce(): List<MonthlyExam>
+
     @Upsert
     suspend fun upsert(exam: MonthlyExam)
 

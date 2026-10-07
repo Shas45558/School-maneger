@@ -62,6 +62,7 @@ class GoogleDriveSyncManager(
                         restored = true,
                         studentsAdded = merged.studentsAdded,
                         attendanceAdded = merged.attendanceAdded,
+                        monthlyExamsAdded = merged.monthlyExamsAdded,
                         uploaded = true
                     )
                 } finally {
@@ -137,6 +138,7 @@ class GoogleDriveSyncManager(
         val restored: Boolean,
         val studentsAdded: Int,
         val attendanceAdded: Int,
+        val monthlyExamsAdded: Int = 0,
         val uploaded: Boolean
     )
 

@@ -796,7 +796,7 @@ private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
                 val result = syncManager.sync(selected)
                 prefs.edit().putLong(AutoSyncWorker.KEY_LAST_SYNC, System.currentTimeMillis()).apply()
                 status = if (result.restored) {
-                    "Drive database merged. Added ${result.studentsAdded} student(s) and ${result.attendanceAdded} attendance record(s)."
+                    "Drive database synced. Added ${result.studentsAdded} student(s), ${result.attendanceAdded} attendance record(s), and ${result.monthlyExamsAdded} exam record(s)."
                 } else {
                     "No database found. The current database was uploaded to the shared folder."
                 }

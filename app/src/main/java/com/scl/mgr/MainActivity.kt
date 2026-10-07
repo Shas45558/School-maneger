@@ -25,7 +25,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
 
         val database = AppDatabase.get(this)
-        val repository = SchoolRepository(database)
+        val repository = SchoolRepository(database, this)
         val syncManager = GoogleDriveSyncManager(this, BackupManager(this, database))
 
         val constraints = Constraints.Builder()
