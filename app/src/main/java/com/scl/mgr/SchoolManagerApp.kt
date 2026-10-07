@@ -1025,10 +1025,16 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
         exams = repository.monthlyExamsOnce(month).associateBy { it.studentId }
     }
     LaunchedEffect(className, section, month, subjectIndex, classStudents, exams) {
+        // Refresh marks from Room without closing the built-in keypad.
+        // The active student is deliberately preserved so Enter -> Next keeps
+        // the keypad open on the next marks box.
+        val currentActive = activeStudentId
         marks = classStudents.associate { student ->
             student.id to (markFor(exams[student.id], selectedSubject.second)?.toString() ?: "")
         }
-        activeStudentId = null
+        if (currentActive != null && classStudents.none { it.id == currentActive }) {
+            activeStudentId = null
+        }
     }
 
     fun setMark(studentId: Long, value: String) {
