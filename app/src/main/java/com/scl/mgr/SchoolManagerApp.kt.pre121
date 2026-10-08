@@ -1099,18 +1099,14 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
 
     fun saveAll() {
         scope.launch {
-            try {
-                val saved = classStudents.mapNotNull { st ->
-                    val v = marks[st.id] ?: return@mapNotNull null
-                    if (v.first.isBlank() && v.second.isBlank()) return@mapNotNull null
-                    ExamMark(st.id, examType, subject.key, v.first.toIntOrNull(), if (subject.hasMcq) v.second.toIntOrNull() else null)
-                }
-                if (saved.isNotEmpty()) repository.saveExamMarks(saved)
-                allMarks = loadExamMarks(examType)
-                message = "${subject.name} marks saved"
-            } catch (t: Throwable) {
-                message = "Could not save marks: ${t.message ?: "database error"}"
+            val saved = classStudents.mapNotNull { st ->
+                val v = marks[st.id] ?: return@mapNotNull null
+                if (v.first.isBlank() && v.second.isBlank()) return@mapNotNull null
+                ExamMark(st.id, examType, subject.key, v.first.toIntOrNull(), if (subject.hasMcq) v.second.toIntOrNull() else null)
             }
+            if (saved.isNotEmpty()) repository.saveExamMarks(saved)
+            allMarks = loadExamMarks(examType)
+            message = "${subject.name} marks saved"
         }
     }
 
@@ -1636,27 +1632,18 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     }
     val listState = rememberLazyListState()
     LaunchedEffect(month) {
-        try {
-            exams = repository.monthlyExamsOnce(month).associateBy { it.studentId }
-        } catch (t: Throwable) {
-            exams = emptyMap()
-            message = "Could not load monthly marks: ${t.message ?: "database error"}"
-        }
+        exams = repository.monthlyExamsOnce(month).associateBy { it.studentId }
     }
     LaunchedEffect(className, section, month, subjectIndex, classStudents, exams) {
-        try {
-            // Refresh marks from Room without closing the built-in keypad.
-            // The active student is deliberately preserved so Enter -> Next keeps
-            // the keypad open on the next marks box.
-            val currentActive = activeStudentId
-            marks = classStudents.associate { student ->
-                student.id to (markFor(exams[student.id], selectedSubject.second)?.toString() ?: "")
-            }
-            if (currentActive != null && classStudents.none { it.id == currentActive }) {
-                activeStudentId = null
-            }
-        } catch (t: Throwable) {
-            message = "Could not refresh monthly marks: ${t.message ?: "database error"}"
+        // Refresh marks from Room without closing the built-in keypad.
+        // The active student is deliberately preserved so Enter -> Next keeps
+        // the keypad open on the next marks box.
+        val currentActive = activeStudentId
+        marks = classStudents.associate { student ->
+            student.id to (markFor(exams[student.id], selectedSubject.second)?.toString() ?: "")
+        }
+        if (currentActive != null && classStudents.none { it.id == currentActive }) {
+            activeStudentId = null
         }
     }
 
@@ -1668,17 +1655,13 @@ private fun MonthlyExamScreen(repository: SchoolRepository) {
     }
 
     suspend fun autoSaveStudent(studentId: Long) {
-        try {
-            val student = classStudents.firstOrNull { it.id == studentId } ?: return
-            val existing = exams[studentId] ?: MonthlyExam(studentId, month)
-            val raw = marks[studentId]?.trim().orEmpty()
-            val value = raw.toIntOrNull()?.coerceIn(0, 20)
-            val saved = withMark(existing, selectedSubject.second, if (raw.isBlank()) null else value)
-            repository.saveMonthlyExams(listOf(saved))
-            exams = exams + (studentId to saved)
-        } catch (t: Throwable) {
-            message = "Could not save monthly mark: ${t.message ?: "database error"}"
-        }
+        val student = classStudents.firstOrNull { it.id == studentId } ?: return
+        val existing = exams[studentId] ?: MonthlyExam(studentId, month)
+        val raw = marks[studentId]?.trim().orEmpty()
+        val value = raw.toIntOrNull()?.coerceIn(0, 20)
+        val saved = withMark(existing, selectedSubject.second, if (raw.isBlank()) null else value)
+        repository.saveMonthlyExams(listOf(saved))
+        exams = exams + (studentId to saved)
     }
 
     fun moveToNextStudent() {
