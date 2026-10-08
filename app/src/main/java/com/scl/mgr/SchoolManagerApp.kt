@@ -1130,10 +1130,10 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             detailSecondMarks = second
             detailAnnualMarks = annual
             detailMonthlyRows = selectedMonths.flatMap { month ->
-                try { repository.monthlyExamsOnce(month).toList() } catch (_: Throwable) { emptyList() }
+                try { repository.monthlyExamsOnce(month) } catch (_: Throwable) { emptyList<MonthlyExam>() }
             }.distinctBy { it.id }
             val monthlyByStudent = classStudents.associate { st ->
-                st.id to selectedMonths.mapNotNull { repository.monthlyExamsOnce(it).firstOrNull { ex -> ex.studentId == st.id } }
+                st.id to detailMonthlyRows.filter { ex -> ex.studentId == st.id }
             }
 
             fun monthlyEquivalent(studentId: Long): Double {
