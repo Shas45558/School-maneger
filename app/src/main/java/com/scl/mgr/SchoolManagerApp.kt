@@ -1258,7 +1258,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     StudentResult(st, combinedAverage, annualGpa, monthly, firstTerm = firstTotal, secondTerm = secondTotal, annualExam = annualExam, rankTieAverage = rankTieAverage)
                 } else {
                     val termTotal = examTotal(st.id, source.values.toList(), includeMonthly = true)
-                    computedDetails[st.id] = StudentDetail(st.id, examType, subjectRows, examOnly, examMax, adjusted, adjustedMax, monthly, 0.0, 0.0, 0.0, termTotal, termGpa, null)
+                    computedDetails[st.id] = StudentDetail(st.id, examType, subjectRows, examOnly, examMax, adjusted, adjustedMax, monthly, 0.0, 0.0, 0.0, termTotal.toDouble(), termGpa, null)
                     StudentResult(st, termTotal, termGpa, monthly)
                 }
             }.sortedWith(
