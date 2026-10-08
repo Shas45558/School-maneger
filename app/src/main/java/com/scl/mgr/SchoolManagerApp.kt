@@ -1191,11 +1191,12 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             }
 
             fun monthlyEquivalent(studentId: Long): Double {
-                // This is the sum of each subject's own monthly average.
-                // It is intentionally NOT an average of all subjects together.
-                return subjects.sumOf { spec ->
-                    monthlyEquivalentForSubject(studentId, spec.key)
-                }
+                // Overall Monthly Equivalent is the average of the MONTHLY TOTAL
+                // for the selected months. Example: September 115 + October 120
+                // gives (115 + 120) / 2 = 117.50.
+                val totals = monthlyByStudent[studentId].orEmpty()
+                    .map { monthlyTotal(it).toDouble() }
+                return if (totals.isEmpty()) 0.0 else totals.average()
             }
             fun examTotal(studentId: Long, termMarks: List<ExamMark>, includeMonthly: Boolean = false): Double {
                 val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
