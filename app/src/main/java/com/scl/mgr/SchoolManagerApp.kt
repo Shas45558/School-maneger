@@ -955,7 +955,7 @@ private data class ExamSubjectSpec(val name: String, val key: String, val max: I
 private val CLASS_6_8_EXAM_SUBJECTS = listOf(
     ExamSubjectSpec("Bangla 1st Paper", "bangla1", 100),
     ExamSubjectSpec("Bangla 2nd Paper", "bangla2", 50),
-    ExamSubjectSpec("English 1st Paper", "english1", 40),
+    ExamSubjectSpec("English 1st Paper", "english1", 100),
     ExamSubjectSpec("English 2nd Paper", "english2", 50, hasMcq = false),
     ExamSubjectSpec("Mathematics", "math", 100),
     ExamSubjectSpec("Social Sciences", "social", 100),
@@ -1003,7 +1003,8 @@ private data class StudentResult(
     val monthlyEquivalent: Double,
     val firstTerm: Double = 0.0,
     val secondTerm: Double = 0.0,
-    val annualExam: Double = 0.0
+    val annualExam: Double = 0.0,
+    val rankTieAverage: Double = 0.0
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -1026,6 +1027,10 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     var showSection by remember { mutableStateOf(false) }
     var showSubject by remember { mutableStateOf(false) }
     var showMonths by remember { mutableStateOf(false) }
+    var activeStudentId by remember { mutableStateOf<Long?>(null) }
+    var activeField by remember { mutableStateOf("cq") }
+    var selectedResultStudent by remember { mutableStateOf<Student?>(null) }
+    var detailMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
 
     val subjects = CLASS_6_8_EXAM_SUBJECTS
     val subject = subjects[subjectIndex.coerceIn(0, subjects.lastIndex)]
@@ -1065,6 +1070,18 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
         if (cqN + mcqN <= subject.max) marks = marks + (studentId to next)
     }
 
+    fun appendKey(key: String) {
+        val id = activeStudentId ?: return
+        val old = marks[id] ?: ("" to "")
+        val current = if (activeField == "cq") old.first else old.second
+        val next = when (key) {
+            "C" -> ""
+            "⌫" -> current.dropLast(1)
+            else -> (current + key).filter(Char::isDigit).take(3)
+        }
+        if (activeField == "cq") update(id, cq = next) else update(id, mcq = next)
+    }
+
     fun saveAll() {
         scope.launch {
             val saved = classStudents.mapNotNull { st ->
@@ -1093,9 +1110,14 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 if (rows.isEmpty()) return 0.0
                 return rows.map { monthlyTotal(it).toDouble() }.average()
             }
-            fun termTotal(studentId: Long, termMarks: List<ExamMark>): Double {
+            fun examTotal(studentId: Long, termMarks: List<ExamMark>): Double {
                 val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
-                return subjects.sumOf { examMarkTotal(bySubject[it.key]) }.toDouble() + monthlyEquivalent(studentId)
+                return subjects.sumOf { examMarkTotal(bySubject[it.key]) }.toDouble()
+            }
+
+            fun marksBySubject(studentId: Long, termMarks: List<ExamMark>): Map<String, Int> {
+                val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
+                return subjects.associate { it.key to examMarkTotal(bySubject[it.key]) }
             }
 
             resultRows = classStudents.map { st ->
@@ -1106,20 +1128,43 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 val annualBySubject = annual.filter { it.studentId == st.id }.associateBy { it.subjectKey }
                 val source = when (examType) { "First Term" -> firstBySubject; "Second Term" -> secondBySubject; else -> annualBySubject }
                 val applicable = subjects.filter { it.countsForGpa }
-                val fail = applicable.any { gradeForExam(examMarkTotal(source[it.key]), it.max) == "F" }
-                val gpa = if (fail) 0.0 else applicable.map { gradePointForExam(examMarkTotal(source[it.key]), it.max) }.average()
+
+                // Term GPA is calculated only from the selected term's exam marks.
+                // Monthly marks are displayed/added to the term total but never affect GPA.
+                val termFail = applicable.any { gradeForExam(examMarkTotal(source[it.key]), it.max) == "F" }
+                val termGpa = if (termFail) 0.0 else applicable.map { gradePointForExam(examMarkTotal(source[it.key]), it.max) }.average()
 
                 if (examType == "Annual") {
-                    val annualExam = subjects.sumOf { examMarkTotal(annualBySubject[it.key]) }.toDouble()
-                    val firstTerm = termTotal(st.id, first)
-                    val secondTerm = termTotal(st.id, second)
-                    val finalNumber = (annualExam + monthly + firstTerm + secondTerm) / 3.0
-                    StudentResult(st, finalNumber, gpa, monthly, firstTerm, secondTerm, annualExam)
+                    // Annual is an independent examination, exactly like First/Second Term.
+                    // Do NOT average First Term or Second Term into Annual marks or GPA.
+                    // GPA is the average of the Annual subject grade points only.
+                    val annualExam = examTotal(st.id, annual)
+                    val annualFail = applicable.any { spec ->
+                        gradeForExam(examMarkTotal(annualBySubject[spec.key]), spec.max) == "F"
+                    }
+                    val annualGpa = if (annualFail) 0.0 else applicable
+                        .map { spec -> gradePointForExam(examMarkTotal(annualBySubject[spec.key]), spec.max) }
+                        .average()
+                    // Annual GPA is based only on the Annual examination.
+                    // For ranking ties at the same Annual GPA, use the average total marks
+                    // across First Term + Second Term + Annual as the tie-breaker.
+                    val firstTotal = examTotal(st.id, first)
+                    val secondTotal = examTotal(st.id, second)
+                    val rankTieAverage = (firstTotal + secondTotal + annualExam) / 3.0
+                    StudentResult(st, annualExam, annualGpa, monthly, annualExam = annualExam, rankTieAverage = rankTieAverage)
                 } else {
                     val examTotal = subjects.sumOf { examMarkTotal(source[it.key]) }.toDouble()
-                    StudentResult(st, examTotal + monthly, gpa, monthly)
+                    StudentResult(st, examTotal + monthly, termGpa, monthly)
                 }
-            }.sortedWith(compareByDescending<StudentResult> { it.gpa }.thenByDescending { it.total })
+            }.sortedWith(
+                if (examType == "Annual") {
+                    compareByDescending<StudentResult> { it.gpa }
+                        .thenByDescending { it.rankTieAverage }
+                        .thenByDescending { it.total }
+                } else {
+                    compareByDescending<StudentResult> { it.gpa }.thenByDescending { it.total }
+                }
+            )
         }
     }
 
@@ -1144,19 +1189,69 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             }
             Text(if (subject.hasMcq) "Enter CQ and MCQ. Total is calculated automatically." else "Enter marks. This subject has no MCQ.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 2.dp, vertical = 3.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Spacer(Modifier.weight(1.3f))
+                Text("CQ", Modifier.width(86.dp), fontWeight = FontWeight.Bold)
+                if (subject.hasMcq) {
+                    Spacer(Modifier.width(5.dp))
+                    Text("MCQ", Modifier.width(86.dp), fontWeight = FontWeight.Bold)
+                }
+                Spacer(Modifier.width(5.dp))
+                Text("Total", Modifier.width(48.dp), fontWeight = FontWeight.Bold)
+            }
             LazyColumn(Modifier.weight(1f)) {
                 items(classStudents, key = { it.id }) { st ->
                     val v = marks[st.id] ?: ("" to "")
                     val total = (v.first.toIntOrNull() ?: 0) + (v.second.toIntOrNull() ?: 0)
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1.3f)) { Text("Roll ${st.studentId}", fontWeight = FontWeight.Bold); Text(st.studentName, maxLines = 1) }
-                        OutlinedTextField(v.first, { update(st.id, cq = it) }, Modifier.width(86.dp), label = { Text("Marks") }, singleLine = true)
+                        Surface(
+                            modifier = Modifier
+                                .width(86.dp)
+                                .height(56.dp)
+                                .clickable {
+                                    activeStudentId = st.id
+                                    activeField = "cq"
+                                },
+                            shape = MaterialTheme.shapes.small,
+                            border = BorderStroke(1.dp, if (activeStudentId == st.id && activeField == "cq") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                        ) {
+                            Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Text("CQ", style = MaterialTheme.typography.labelSmall)
+                                    Text(v.first.ifBlank { "—" }, fontWeight = FontWeight.Bold)
+                                }
+                            }
+                        }
                         if (subject.hasMcq) {
                             Spacer(Modifier.width(5.dp))
-                            OutlinedTextField(v.second, { update(st.id, mcq = it) }, Modifier.width(86.dp), label = { Text("MCQ") }, singleLine = true)
+                            Surface(
+                                modifier = Modifier
+                                    .width(86.dp)
+                                    .height(56.dp)
+                                    .clickable {
+                                        activeStudentId = st.id
+                                        activeField = "mcq"
+                                    },
+                                shape = MaterialTheme.shapes.small,
+                                border = BorderStroke(1.dp, if (activeStudentId == st.id && activeField == "mcq") MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline)
+                            ) {
+                                Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                        Text("MCQ", style = MaterialTheme.typography.labelSmall)
+                                        Text(v.second.ifBlank { "—" }, fontWeight = FontWeight.Bold)
+                                    }
+                                }
+                            }
                         }
                         Spacer(Modifier.width(5.dp))
-                        Text("$total", modifier = Modifier.width(38.dp), fontWeight = FontWeight.Bold)
+                        Column(Modifier.width(48.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text("Total", style = MaterialTheme.typography.labelSmall)
+                            Text("$total", fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
@@ -1169,7 +1264,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 }
                 OutlinedButton({ showMonths = true }) { Text("Select 2/3 Months") }
             }
-            Text("Monthly Equivalent has no GPA. It is calculated from existing Monthly Exam marks and added automatically.", style = MaterialTheme.typography.bodySmall)
+            Text("Annual GPA uses Annual exam marks only. If GPA is tied, rank uses the average total marks of First Term + Second Term + Annual.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
             Button({ calculateResults() }, Modifier.fillMaxWidth()) { Text("Calculate / Refresh Results") }
             Spacer(Modifier.height(6.dp))
@@ -1177,16 +1272,137 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 item { Text("$examType — Class $className$section", fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)) }
                 items(resultRows, key = { it.student.id }) { row ->
                     val rank = resultRows.indexOf(row) + 1
-                    Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Column(Modifier.padding(10.dp)) {
-                        Text("Rank $rank • ${row.student.studentId} — ${row.student.studentName}", fontWeight = FontWeight.Bold)
-                        Text("GPA: ${String.format("%.2f", row.gpa)}   Final Total: ${String.format("%.2f", row.total)}")
-                        Text("Monthly Equivalent: ${String.format("%.2f", row.monthlyEquivalent)}", style = MaterialTheme.typography.bodySmall)
-                        if (examType == "Annual") Text("Annual: ${row.annualExam.toInt()} + Monthly ${row.monthlyEquivalent.toInt()} + 1st Term ${String.format("%.2f", row.firstTerm)} + 2nd Term ${String.format("%.2f", row.secondTerm)} ÷ 3", style = MaterialTheme.typography.bodySmall)
-                    } }
+                    Card(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { selectedResultStudent = row.student }
+                    ) {
+                        Column(Modifier.padding(10.dp)) {
+                            Text("Rank $rank • ${row.student.studentId} — ${row.student.studentName}", fontWeight = FontWeight.Bold)
+                            Text("GPA: ${String.format("%.2f", row.gpa)}   Final Total: ${String.format("%.2f", row.total)}")
+                            Text("Tap to view all subjects • CQ + MCQ = Total", style = MaterialTheme.typography.bodySmall)
+                            Text("Monthly Equivalent: ${String.format("%.2f", row.monthlyEquivalent)}", style = MaterialTheme.typography.bodySmall)
+                            if (examType == "Annual") Text("Annual GPA: Annual exam only • tie-break: average total of First + Second + Annual", style = MaterialTheme.typography.bodySmall)
+                        }
+                    }
                 }
             }
         }
+        if (activeStudentId != null && tab == 0) {
+            val activeStudent = classStudents.firstOrNull { it.id == activeStudentId }
+            val activeValues = marks[activeStudentId] ?: ("" to "")
+            val activeValue = if (activeField == "cq") activeValues.first else activeValues.second
+            Card(
+                Modifier.fillMaxWidth().padding(top = 6.dp),
+                elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
+            ) {
+                Column(Modifier.padding(8.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "${if (activeField == "cq") "CQ" else "MCQ"} • ${activeStudent?.studentName ?: "Student"}",
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text("${subject.name} • Max ${subject.max}", style = MaterialTheme.typography.labelSmall)
+                        }
+                        Text(activeValue.ifBlank { "0" }, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    }
+                    Spacer(Modifier.height(5.dp))
+                    listOf("1","2","3","4","5","6","7","8","9","C","0","⌫").chunked(3).forEach { row ->
+                        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            row.forEach { key ->
+                                Button(
+                                    onClick = { appendKey(key) },
+                                    modifier = Modifier.weight(1f).height(42.dp),
+                                    contentPadding = PaddingValues(0.dp),
+                                    shape = MaterialTheme.shapes.small
+                                ) { Text(key, style = MaterialTheme.typography.titleMedium) }
+                            }
+                        }
+                        Spacer(Modifier.height(4.dp))
+                    }
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        OutlinedButton(
+                            onClick = { activeStudentId = null },
+                            modifier = Modifier.weight(1f).height(42.dp)
+                        ) { Text("Close") }
+                        if (subject.hasMcq) {
+                            OutlinedButton(
+                                onClick = { activeField = if (activeField == "cq") "mcq" else "cq" },
+                                modifier = Modifier.weight(1f).height(42.dp)
+                            ) { Text(if (activeField == "cq") "MCQ →" else "← CQ") }
+                        }
+                        Button(
+                            onClick = {
+                                val index = classStudents.indexOfFirst { it.id == activeStudentId }
+                                if (index >= 0 && index < classStudents.lastIndex) {
+                                    activeStudentId = classStudents[index + 1].id
+                                } else {
+                                    activeStudentId = null
+                                }
+                            },
+                            modifier = Modifier.weight(1.3f).height(42.dp)
+                        ) { Text("Enter →") }
+                    }
+                }
+            }
+        }
+
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
+    }
+    LaunchedEffect(selectedResultStudent, examType) {
+        val student = selectedResultStudent ?: return@LaunchedEffect
+        detailMarks = loadExamMarks(examType)
+    }
+
+    if (selectedResultStudent != null) {
+        val student = selectedResultStudent!!
+        val selectedDetail = detailMarks.filter { it.studentId == student.id }
+        val bySubject = selectedDetail.associateBy { it.subjectKey }
+        val maxTotal = subjects.sumOf { it.max }
+        val obtained = subjects.sumOf { spec -> examMarkTotal(bySubject[spec.key]) }
+        val overallGrade = gradeForExam(obtained, maxTotal)
+        AlertDialog(
+            onDismissRequest = { selectedResultStudent = null },
+            title = { Text("${student.studentName} • Full Result") },
+            text = {
+                Column {
+                    Text("Roll ${student.studentId} • $examType", fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(6.dp))
+                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
+                        item {
+                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text("Subject", Modifier.weight(1.4f), fontWeight = FontWeight.Bold)
+                                Text("CQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
+                                Text("MCQ", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
+                                Text("Total", Modifier.weight(.6f), fontWeight = FontWeight.Bold)
+                                Text("Grade", Modifier.weight(.65f), fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        items(subjects) { spec ->
+                            val mark = bySubject[spec.key]
+                            val total = examMarkTotal(mark)
+                            val grade = gradeForExam(total, spec.max)
+                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                Text(spec.name, Modifier.weight(1.4f), maxLines = 2)
+                                Text(mark?.cq?.toString() ?: "—", Modifier.weight(.45f))
+                                Text(if (spec.hasMcq) mark?.mcq?.toString() ?: "—" else "—", Modifier.weight(.5f))
+                                Text("$total/${spec.max}", Modifier.weight(.6f))
+                                Text(grade, Modifier.weight(.65f), fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    Text("Grand Total: $obtained / $maxTotal", fontWeight = FontWeight.Bold)
+                    Text("Overall Grade: $overallGrade")
+                    Text("GPA: ${resultRows.firstOrNull { it.student.id == student.id }?.gpa?.let { String.format("%.2f", it) } ?: "0.00"}")
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { selectedResultStudent = null }) { Text("Close") }
+            }
+        )
     }
     if (showExamType) { DropdownDialog("Exam", listOf("First Term", "Second Term", "Annual"), { examType=it; showExamType=false; resultRows=emptyList() }, { showExamType=false }) }
     if (showClass) { DropdownDialog("Class", listOf("6","7","8"), { className=it; subjectIndex=0; showClass=false }, { showClass=false }) }

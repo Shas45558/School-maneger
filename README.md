@@ -50,13 +50,14 @@ The Google Drive backup password can now be remembered on the current device. En
 - The database is stored without app-level encryption, as requested.
 
 
-## Classes 6–8 Exams & Results (v1.12)
+## Classes 6–8 Exams & Results (v1.14)
 - Exam selection: First Term, Second Term, Annual.
 - Bangla 2nd Paper 50, English 2nd Paper 50, Agriculture 20, ICT 25, Oral 10.
 - English 2nd Paper, Agriculture, ICT and Oral have no MCQ input.
 - Oral is excluded from GPA calculation.
-- Monthly Equivalent uses existing Monthly Exam records; teacher selects 2 or 3 months and the selected-month average is added automatically. Monthly Equivalent itself has no GPA.
-- First/Second Term ranking: GPA first, then higher final total.
-- Annual final number follows the requested formula: (Annual Exam + Annual Monthly Equivalent + First Term + Second Term) / 3.
-- Annual ranking uses GPA first, then higher final number.
+- Monthly Equivalent uses existing Monthly Exam records; teacher selects 2 or 3 months and the selected-month average is added to the First/Second Term display total only. Monthly Equivalent never affects GPA.
+- First/Second Term GPA: calculated from that term's subject grades using the standard 5-point scale; Monthly marks do not affect GPA.
+- Annual final number: (Annual Exam + First Term Exam + Second Term Exam) / 3. This prevents Monthly Equivalent from being counted twice.
+- Annual GPA: calculated only from the Annual exam subject grades using the standard 5-point scale. First Term and Second Term do not affect Annual GPA. Oral remains excluded from GPA.
+- Annual ranking uses Annual GPA first. If GPA is tied, the tie-break is the average total marks across First Term + Second Term + Annual; higher average ranks first.
 - Legacy exam names (1st Term, 2nd Term, Annual Exam) remain readable.
