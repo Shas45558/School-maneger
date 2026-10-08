@@ -1129,9 +1129,15 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             detailFirstMarks = first
             detailSecondMarks = second
             detailAnnualMarks = annual
-            detailMonthlyRows = selectedMonths.flatMap { month ->
-                try { repository.monthlyExamsOnce(month) } catch (_: Throwable) { emptyList<MonthlyExam>() }
-            }.distinctBy { it.id }
+            val loadedMonthlyRows: MutableList<MonthlyExam> = mutableListOf()
+            for (month: String in selectedMonths) {
+                try {
+                    loadedMonthlyRows.addAll(repository.monthlyExamsOnce(month))
+                } catch (_: Throwable) {
+                    // Keep already-loaded months if one month cannot be read.
+                }
+            }
+            detailMonthlyRows = loadedMonthlyRows
             val monthlyByStudent = classStudents.associate { st ->
                 st.id to detailMonthlyRows.filter { ex -> ex.studentId == st.id }
             }
