@@ -53,6 +53,7 @@ import com.scl.mgr.data.ExamMark
 import java.time.LocalDate
 import java.time.YearMonth
 import java.time.format.DateTimeFormatter
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
 
@@ -955,7 +956,7 @@ private data class ExamSubjectSpec(val name: String, val key: String, val max: I
 private val CLASS_6_8_EXAM_SUBJECTS = listOf(
     ExamSubjectSpec("Bangla 1st Paper", "bangla1", 100),
     ExamSubjectSpec("Bangla 2nd Paper", "bangla2", 50),
-    ExamSubjectSpec("English 1st Paper", "english1", 100),
+    ExamSubjectSpec("English 1st Paper", "english1", 100, hasMcq = false),
     ExamSubjectSpec("English 2nd Paper", "english2", 50, hasMcq = false),
     ExamSubjectSpec("Mathematics", "math", 100),
     ExamSubjectSpec("Social Sciences", "social", 100),
@@ -1020,7 +1021,11 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     var marks by remember { mutableStateOf<Map<Long, Pair<String, String>>>(emptyMap()) }
     var allMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
     var resultRows by remember { mutableStateOf<List<StudentResult>>(emptyList()) }
-    var selectedMonths by rememberSaveable { mutableStateOf(listOf(YearMonth.now().minusMonths(1).toString(), YearMonth.now().minusMonths(2).toString())) }
+    var selectedMonths by rememberSaveable {
+        val now = YearMonth.now()
+        val m2 = now.monthValue.coerceAtLeast(2)
+        mutableStateOf(listOf(YearMonth.of(now.year, m2).toString(), YearMonth.of(now.year, m2 - 1).toString()))
+    }
     var message by remember { mutableStateOf<String?>(null) }
     var showExamType by remember { mutableStateOf(false) }
     var showClass by remember { mutableStateOf(false) }
@@ -1031,6 +1036,10 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     var activeField by remember { mutableStateOf("cq") }
     var selectedResultStudent by remember { mutableStateOf<Student?>(null) }
     var detailMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
+    var detailFirstMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
+    var detailSecondMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
+    var detailAnnualMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
+    var detailMonthlyRows by remember { mutableStateOf<List<MonthlyExam>>(emptyList()) }
 
     val subjects = CLASS_6_8_EXAM_SUBJECTS
     val subject = subjects[subjectIndex.coerceIn(0, subjects.lastIndex)]
@@ -1108,11 +1117,21 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             fun monthlyEquivalent(studentId: Long): Double {
                 val rows = monthlyByStudent[studentId].orEmpty()
                 if (rows.isEmpty()) return 0.0
-                return rows.map { monthlyTotal(it).toDouble() }.average()
+                return subjects.sumOf { spec ->
+                    rows.map { monthlySubjectMark(it, spec.key).toDouble() }.average()
+                }
             }
-            fun examTotal(studentId: Long, termMarks: List<ExamMark>): Double {
+            fun monthlyEquivalentForSubject(studentId: Long, subjectKey: String): Double {
+                val rows = monthlyByStudent[studentId].orEmpty()
+                if (rows.isEmpty()) return 0.0
+                return rows.map { monthlySubjectMark(it, subjectKey).toDouble() }.average()
+            }
+            fun examTotal(studentId: Long, termMarks: List<ExamMark>, includeMonthly: Boolean = false): Double {
                 val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
-                return subjects.sumOf { examMarkTotal(bySubject[it.key]) }.toDouble()
+                return subjects.sumOf { spec ->
+                    examMarkTotal(bySubject[spec.key]).toDouble() +
+                        if (includeMonthly) monthlyEquivalentForSubject(studentId, spec.key) else 0.0
+                }
             }
 
             fun marksBySubject(studentId: Long, termMarks: List<ExamMark>): Map<String, Int> {
@@ -1129,32 +1148,41 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 val source = when (examType) { "First Term" -> firstBySubject; "Second Term" -> secondBySubject; else -> annualBySubject }
                 val applicable = subjects.filter { it.countsForGpa }
 
-                // Term GPA is calculated only from the selected term's exam marks.
-                // Monthly marks are displayed/added to the term total but never affect GPA.
-                val termFail = applicable.any { gradeForExam(examMarkTotal(source[it.key]), it.max) == "F" }
-                val termGpa = if (termFail) 0.0 else applicable.map { gradePointForExam(examMarkTotal(source[it.key]), it.max) }.average()
+                // First/Second Term: add the teacher-selected average monthly mark for
+                // each subject to that subject's exam mark. Monthly marks are therefore
+                // part of the term total and the term GPA.
+                val termFail = applicable.any { spec ->
+                    val adjusted = examMarkTotal(source[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt()
+                    gradeForExam(adjusted, spec.max + 20) == "F"
+                }
+                val termGpa = if (termFail) 0.0 else applicable.map { spec ->
+                    val adjusted = examMarkTotal(source[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt()
+                    gradePointForExam(adjusted, spec.max + 20)
+                }.average()
 
                 if (examType == "Annual") {
-                    // Annual is an independent examination, exactly like First/Second Term.
-                    // Do NOT average First Term or Second Term into Annual marks or GPA.
-                    // GPA is the average of the Annual subject grade points only.
-                    val annualExam = examTotal(st.id, annual)
+                    // Annual GPA is still based ONLY on the Annual examination, exactly
+                    // like the Annual exam itself; First/Second Term never enter Annual GPA.
+                    val annualExam = examTotal(st.id, annual, includeMonthly = true)
                     val annualFail = applicable.any { spec ->
-                        gradeForExam(examMarkTotal(annualBySubject[spec.key]), spec.max) == "F"
+                        gradeForExam(examMarkTotal(annualBySubject[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt(), spec.max + 20) == "F"
                     }
                     val annualGpa = if (annualFail) 0.0 else applicable
-                        .map { spec -> gradePointForExam(examMarkTotal(annualBySubject[spec.key]), spec.max) }
+                        .map { spec -> gradePointForExam(examMarkTotal(annualBySubject[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt(), spec.max + 20) }
                         .average()
-                    // Annual GPA is based only on the Annual examination.
-                    // For ranking ties at the same Annual GPA, use the average total marks
-                    // across First Term + Second Term + Annual as the tie-breaker.
-                    val firstTotal = examTotal(st.id, first)
-                    val secondTotal = examTotal(st.id, second)
-                    val rankTieAverage = (firstTotal + secondTotal + annualExam) / 3.0
-                    StudentResult(st, annualExam, annualGpa, monthly, annualExam = annualExam, rankTieAverage = rankTieAverage)
+
+                    // Annual final/combined total is the average of: First Term total
+                    // (including its selected monthly equivalent), Second Term total
+                    // (including its selected monthly equivalent), and Annual exam total
+                    // (also including its selected monthly equivalent).
+                    val firstTotal = examTotal(st.id, first, includeMonthly = true)
+                    val secondTotal = examTotal(st.id, second, includeMonthly = true)
+                    val combinedAverage = (firstTotal + secondTotal + annualExam) / 3.0
+                    val rankTieAverage = combinedAverage
+                    StudentResult(st, combinedAverage, annualGpa, monthly, firstTerm = firstTotal, secondTerm = secondTotal, annualExam = annualExam, rankTieAverage = rankTieAverage)
                 } else {
-                    val examTotal = subjects.sumOf { examMarkTotal(source[it.key]) }.toDouble()
-                    StudentResult(st, examTotal + monthly, termGpa, monthly)
+                    val termTotal = examTotal(st.id, source.values.toList(), includeMonthly = true)
+                    StudentResult(st, termTotal, termGpa, monthly)
                 }
             }.sortedWith(
                 if (examType == "Annual") {
@@ -1259,12 +1287,12 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
         } else {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text("Monthly Equivalent: ${selectedMonths.size} month(s)", fontWeight = FontWeight.Bold)
+                    Text("Monthly Equivalent: average of ${selectedMonths.size} selected monthly exams", fontWeight = FontWeight.Bold)
                     Text(selectedMonths.joinToString(", "), style = MaterialTheme.typography.bodySmall)
                 }
-                OutlinedButton({ showMonths = true }) { Text("Select 2/3 Months") }
+                OutlinedButton({ showMonths = true }) { Text("Select 2/3 This-Year Months") }
             }
-            Text("Annual GPA uses Annual exam marks only. If GPA is tied, rank uses the average total marks of First Term + Second Term + Annual.", style = MaterialTheme.typography.bodySmall)
+            Text("Term/Annual total = exam subject marks + selected-month average. Annual GPA uses the Annual exam (including its monthly equivalent); final Annual total and tie-break use the average of the 3 adjusted exam totals.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
             Button({ calculateResults() }, Modifier.fillMaxWidth()) { Text("Calculate / Refresh Results") }
             Spacer(Modifier.height(6.dp))
@@ -1283,7 +1311,8 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                             Text("GPA: ${String.format("%.2f", row.gpa)}   Final Total: ${String.format("%.2f", row.total)}")
                             Text("Tap to view all subjects • CQ + MCQ = Total", style = MaterialTheme.typography.bodySmall)
                             Text("Monthly Equivalent: ${String.format("%.2f", row.monthlyEquivalent)}", style = MaterialTheme.typography.bodySmall)
-                            if (examType == "Annual") Text("Annual GPA: Annual exam only • tie-break: average total of First + Second + Annual", style = MaterialTheme.typography.bodySmall)
+                            if (examType == "Annual") Text("Combined average: ${String.format("%.2f", row.total)} • 1st: ${String.format("%.2f", row.firstTerm)} • 2nd: ${String.format("%.2f", row.secondTerm)} • Annual: ${String.format("%.2f", row.annualExam)}", style = MaterialTheme.typography.bodySmall)
+                            if (examType == "Annual") Text("Annual GPA: Annual exam + monthly equivalent only • tie-break: average of the 3 adjusted exam totals", style = MaterialTheme.typography.bodySmall)
                         }
                     }
                 }
@@ -1294,7 +1323,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             val activeValues = marks[activeStudentId] ?: ("" to "")
             val activeValue = if (activeField == "cq") activeValues.first else activeValues.second
             Card(
-                Modifier.fillMaxWidth().padding(top = 6.dp),
+                Modifier.fillMaxWidth().padding(top = 6.dp).imePadding(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp)
             ) {
                 Column(Modifier.padding(8.dp)) {
@@ -1351,18 +1380,40 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
 
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
     }
-    LaunchedEffect(selectedResultStudent, examType) {
+    LaunchedEffect(selectedResultStudent, examType, selectedMonths) {
         val student = selectedResultStudent ?: return@LaunchedEffect
         detailMarks = loadExamMarks(examType)
+        detailFirstMarks = loadExamMarks("First Term")
+        detailSecondMarks = loadExamMarks("Second Term")
+        detailAnnualMarks = loadExamMarks("Annual")
+        detailMonthlyRows = selectedMonths.mapNotNull { month ->
+            repository.monthlyExamsOnce(month).firstOrNull { it.studentId == student.id }
+        }
     }
 
     if (selectedResultStudent != null) {
         val student = selectedResultStudent!!
         val selectedDetail = detailMarks.filter { it.studentId == student.id }
         val bySubject = selectedDetail.associateBy { it.subjectKey }
-        val maxTotal = subjects.sumOf { it.max }
-        val obtained = subjects.sumOf { spec -> examMarkTotal(bySubject[spec.key]) }
-        val overallGrade = gradeForExam(obtained, maxTotal)
+        val firstBySubject = detailFirstMarks.filter { it.studentId == student.id }.associateBy { it.subjectKey }
+        val secondBySubject = detailSecondMarks.filter { it.studentId == student.id }.associateBy { it.subjectKey }
+        val annualBySubject = detailAnnualMarks.filter { it.studentId == student.id }.associateBy { it.subjectKey }
+        val monthlyEquivalentForSubject: (String) -> Double = { key ->
+            if (detailMonthlyRows.isEmpty()) 0.0 else detailMonthlyRows.map { monthlySubjectMark(it, key).toDouble() }.average()
+        }
+        val examOnlyObtained = subjects.sumOf { spec -> examMarkTotal(bySubject[spec.key]) }
+        val examOnlyMax = subjects.sumOf { it.max }
+        val adjustedObtained = subjects.sumOf { spec -> examMarkTotal(bySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
+        val adjustedMax = examOnlyMax + (subjects.size * 20)
+        val row = resultRows.firstOrNull { it.student.id == student.id }
+        val rank = resultRows.indexOfFirst { it.student.id == student.id }.let { if (it >= 0) it + 1 else 0 }
+        val firstTotal = subjects.sumOf { spec -> examMarkTotal(firstBySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
+        val secondTotal = subjects.sumOf { spec -> examMarkTotal(secondBySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
+        val annualTotal = subjects.sumOf { spec -> examMarkTotal(annualBySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
+        val annualAverage = (firstTotal + secondTotal + annualTotal) / 3.0
+        val annualCombinedTotal = if (examType == "Annual") annualAverage else adjustedObtained
+        val displayGpa = row?.gpa ?: 0.0
+        val displayRank = if (rank > 0) rank else null
         AlertDialog(
             onDismissRequest = { selectedResultStudent = null },
             title = { Text("${student.studentName} • Full Result") },
@@ -1373,30 +1424,44 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     LazyColumn(Modifier.heightIn(max = 420.dp)) {
                         item {
                             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Subject", Modifier.weight(1.4f), fontWeight = FontWeight.Bold)
-                                Text("CQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
-                                Text("MCQ", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
-                                Text("Total", Modifier.weight(.6f), fontWeight = FontWeight.Bold)
-                                Text("Grade", Modifier.weight(.65f), fontWeight = FontWeight.Bold)
+                                Text("Subject", Modifier.weight(1.25f), fontWeight = FontWeight.Bold)
+                                Text("CQ", Modifier.weight(.4f), fontWeight = FontWeight.Bold)
+                                Text("MCQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
+                                Text("Total", Modifier.weight(.55f), fontWeight = FontWeight.Bold)
+                                Text("GPA", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
                             }
                         }
                         items(subjects) { spec ->
                             val mark = bySubject[spec.key]
                             val total = examMarkTotal(mark)
-                            val grade = gradeForExam(total, spec.max)
+                            val gp = gradePointForExam(total, spec.max)
                             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(spec.name, Modifier.weight(1.4f), maxLines = 2)
-                                Text(mark?.cq?.toString() ?: "—", Modifier.weight(.45f))
-                                Text(if (spec.hasMcq) mark?.mcq?.toString() ?: "—" else "—", Modifier.weight(.5f))
-                                Text("$total/${spec.max}", Modifier.weight(.6f))
-                                Text(grade, Modifier.weight(.65f), fontWeight = FontWeight.Bold)
+                                Text(spec.name, Modifier.weight(1.25f), maxLines = 2)
+                                Text(mark?.cq?.toString() ?: "—", Modifier.weight(.4f))
+                                Text(if (spec.hasMcq) mark?.mcq?.toString() ?: "—" else "—", Modifier.weight(.45f))
+                                Text("$total/${spec.max}", Modifier.weight(.55f))
+                                Text(String.format("%.2f", gp), Modifier.weight(.5f), fontWeight = FontWeight.Bold)
                             }
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    Text("Grand Total: $obtained / $maxTotal", fontWeight = FontWeight.Bold)
-                    Text("Overall Grade: $overallGrade")
-                    Text("GPA: ${resultRows.firstOrNull { it.student.id == student.id }?.gpa?.let { String.format("%.2f", it) } ?: "0.00"}")
+                    if (examType == "Annual") {
+                        Text("Exam Total: $examOnlyObtained / $examOnlyMax", fontWeight = FontWeight.Bold)
+                        Text("Monthly Equivalent: ${String.format("%.2f", row?.monthlyEquivalent ?: 0.0)}")
+                        Text("Annual Total: ${String.format("%.2f", annualTotal)}")
+                        Text("1st Term Mark: ${String.format("%.2f", firstTotal)}")
+                        Text("2nd Term Mark: ${String.format("%.2f", secondTotal)}")
+                        Text("Total: ${String.format("%.2f", firstTotal + secondTotal + annualTotal)}")
+                        Text("Average: ${String.format("%.2f", annualCombinedTotal)}", fontWeight = FontWeight.Bold)
+                        Text("GPA: ${String.format("%.2f", displayGpa)}", fontWeight = FontWeight.Bold)
+                        if (displayRank != null) Text("Rank: $displayRank", fontWeight = FontWeight.Bold)
+                    } else {
+                        Text("Exam Total: $examOnlyObtained / $examOnlyMax", fontWeight = FontWeight.Bold)
+                        Text("Monthly Equivalent: ${String.format("%.2f", row?.monthlyEquivalent ?: 0.0)}")
+                        Text("Total: ${String.format("%.2f", adjustedObtained)} / ${String.format("%.2f", adjustedMax)}", fontWeight = FontWeight.Bold)
+                        Text("GPA: ${String.format("%.2f", displayGpa)}", fontWeight = FontWeight.Bold)
+                        if (displayRank != null) Text("Rank: $displayRank", fontWeight = FontWeight.Bold)
+                    }
                 }
             },
             confirmButton = {
@@ -1419,11 +1484,12 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
 
 @Composable
 private fun MonthSelectionDialog(selected: List<String>, onDone: (List<String>) -> Unit, onDismiss: () -> Unit) {
-    val options = remember { (0..11).map { YearMonth.now().minusMonths(it.toLong()).toString() } }
+    val currentYear = YearMonth.now().year
+    val options = remember(currentYear) { (1..12).map { YearMonth.of(currentYear, it).toString() }.reversed() }
     var picked by remember(selected) { mutableStateOf(selected.toSet()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select 2 or 3 months") },
+        title = { Text("Select this year's monthly exams (2 or 3)") },
         text = {
             Column {
                 options.forEach { month ->

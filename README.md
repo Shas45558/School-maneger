@@ -61,3 +61,12 @@ The Google Drive backup password can now be remembered on the current device. En
 - Annual GPA: calculated only from the Annual exam subject grades using the standard 5-point scale. First Term and Second Term do not affect Annual GPA. Oral remains excluded from GPA.
 - Annual ranking uses Annual GPA first. If GPA is tied, the tie-break is the average total marks across First Term + Second Term + Annual; higher average ranks first.
 - Legacy exam names (1st Term, 2nd Term, Annual Exam) remain readable.
+
+## v1.17 exam calculation updates
+- English 1st Paper is CQ-only (no MCQ input).
+- The exam built-in keypad is kept inside the bottom area with IME-safe padding so the CQ/MCQ entry remains visible above any system IME.
+- First Term and Second Term subject totals = exam subject marks + the average mark for that subject from the teacher-selected 2 or 3 monthly exams.
+- Monthly-exam selection is restricted to months in the current calendar year.
+- Annual GPA remains based only on Annual exam subject marks.
+- Annual displayed/final combined total = average of First Term total (including monthly equivalent), Second Term total (including monthly equivalent), and Annual exam total.
+- Annual rank continues to sort by Annual GPA first, then by the average of those three exam totals as the GPA tie-breaker.
