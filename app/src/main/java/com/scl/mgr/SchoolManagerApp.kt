@@ -1196,6 +1196,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 // gives (115 + 120) / 2 = 117.50.
                 val totals = monthlyByStudent[studentId].orEmpty()
                     .map { monthlyTotal(it).toDouble() }
+                    .filter { it > 0.0 }
                 return if (totals.isEmpty()) 0.0 else totals.average()
             }
             fun examTotal(studentId: Long, termMarks: List<ExamMark>, includeMonthly: Boolean = false): Double {
