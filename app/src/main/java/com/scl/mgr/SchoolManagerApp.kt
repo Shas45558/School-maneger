@@ -1170,40 +1170,45 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 st.id to detailMonthlyRows.filter { ex -> ex.studentId == st.id }
             }
 
-            // Monthly Equivalent is calculated SUBJECT-BY-SUBJECT.
-            // Only actually entered monthly marks participate in the average;
-            // null/unentered marks must NOT be treated as zero.
-            fun monthlyEquivalentForSubject(studentId: Long, subjectKey: String): Double {
-                val rows = monthlyByStudent[studentId].orEmpty()
-                val values = rows.mapNotNull { exam ->
+            // Monthly average is based strictly on the number of months selected by the teacher.
+            // 1 selected month -> divide by 1, 2 -> divide by 2, 3 -> divide by 3, etc.
+            // A missing mark in a selected month contributes 0; it is NOT removed from the divisor.
+            fun monthlyAverageForSubject(studentId: Long, subjectKey: String): Double {
+                val divisor = selectedMonths.size
+                if (divisor == 0) return 0.0
+
+                val rowsByMonth = monthlyByStudent[studentId].orEmpty().associateBy { it.yearMonth }
+                val total = selectedMonths.sumOf { month ->
+                    val exam = rowsByMonth[month]
                     when (subjectKey) {
-                        "bangla1", "bangla2" -> exam.bangla
-                        "english1", "english2" -> exam.english
-                        "math" -> exam.math
-                        "social" -> exam.socialScience
-                        "science" -> exam.science
-                        "religion" -> exam.religion
-                        "agriculture" -> exam.hMOrAgri
-                        else -> null
+                        "bangla1", "bangla2" -> exam?.bangla ?: 0
+                        "english1", "english2" -> exam?.english ?: 0
+                        "math" -> exam?.math ?: 0
+                        "social" -> exam?.socialScience ?: 0
+                        "science" -> exam?.science ?: 0
+                        "religion" -> exam?.religion ?: 0
+                        "agriculture" -> exam?.hMOrAgri ?: 0
+                        else -> 0
                     }
-                }.filter { it >= 0 }
-                return if (values.isEmpty()) 0.0 else values.average()
+                }
+                return total.toDouble() / divisor.toDouble()
             }
 
-            fun monthlyEquivalent(studentId: Long): Double {
-                // Overall Monthly Equivalent is the average of the MONTHLY TOTAL
-                // for the selected months. Example: September 115 + October 120
-                // gives (115 + 120) / 2 = 117.50.
-                val totals = monthlyByStudent[studentId].orEmpty()
-                    .map { monthlyTotal(it).toDouble() }
-                    .filter { it > 0.0 }
-                return if (totals.isEmpty()) 0.0 else totals.average()
+            fun monthlyAverage(studentId: Long): Double {
+                val divisor = selectedMonths.size
+                if (divisor == 0) return 0.0
+
+                val rowsByMonth = monthlyByStudent[studentId].orEmpty().associateBy { it.yearMonth }
+                val total = selectedMonths.sumOf { month ->
+                    monthlyTotal(rowsByMonth[month] ?: MonthlyExam(studentId = studentId, yearMonth = month))
+                }
+                return total.toDouble() / divisor.toDouble()
             }
             fun examTotal(studentId: Long, termMarks: List<ExamMark>, includeMonthly: Boolean = false): Double {
                 val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
                 return subjects.sumOf { spec ->
                     examMarkTotal(bySubject[spec.key]).toDouble() +
-                        if (includeMonthly) monthlyEquivalentForSubject(studentId, spec.key) else 0.0
+                        if (includeMonthly) monthlyAverageForSubject(studentId, spec.key) else 0.0
                 }
             }
 
@@ -1214,7 +1219,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
 
             val computedDetails = mutableMapOf<Long, StudentDetail>()
             resultRows = classStudents.map { st ->
-                val monthly = monthlyEquivalent(st.id)
+                val monthly = monthlyAverage(st.id)
                 val currentBySubject = current.filter { it.studentId == st.id }.associateBy { it.subjectKey }
                 val firstBySubject = first.filter { it.studentId == st.id }.associateBy { it.subjectKey }
                 val secondBySubject = second.filter { it.studentId == st.id }.associateBy { it.subjectKey }
@@ -1226,17 +1231,17 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 // each subject to that subject's exam mark. Monthly marks are therefore
                 // part of the term total and the term GPA.
                 val termFail = applicable.any { spec ->
-                    val adjusted = examMarkTotal(source[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt()
+                    val adjusted = examMarkTotal(source[spec.key]) + monthlyAverageForSubject(st.id, spec.key).roundToInt()
                     gradeForExam(adjusted, spec.max + 20) == "F"
                 }
                 val termGpa = if (termFail) 0.0 else applicable.map { spec ->
-                    val adjusted = examMarkTotal(source[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt()
+                    val adjusted = examMarkTotal(source[spec.key]) + monthlyAverageForSubject(st.id, spec.key).roundToInt()
                     gradePointForExam(adjusted, spec.max + 20)
                 }.average()
 
                 val examOnly = subjects.sumOf { spec -> examMarkTotal(currentBySubject[spec.key]) }
                 val examMax = subjects.sumOf { it.max }
-                val adjusted = subjects.sumOf { spec -> examMarkTotal(currentBySubject[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key) }
+                val adjusted = subjects.sumOf { spec -> examMarkTotal(currentBySubject[spec.key]) + monthlyAverageForSubject(st.id, spec.key) }
                 val adjustedMax = examMax + subjects.size * 20
                 val subjectRows = subjects.map { spec ->
                     val mark = source[spec.key]
@@ -1257,10 +1262,10 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     // like the Annual exam itself; First/Second Term never enter Annual GPA.
                     val annualExam = examTotal(st.id, annual, includeMonthly = true)
                     val annualFail = applicable.any { spec ->
-                        gradeForExam(examMarkTotal(annualBySubject[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt(), spec.max + 20) == "F"
+                        gradeForExam(examMarkTotal(annualBySubject[spec.key]) + monthlyAverageForSubject(st.id, spec.key).roundToInt(), spec.max + 20) == "F"
                     }
                     val annualGpa = if (annualFail) 0.0 else applicable
-                        .map { spec -> gradePointForExam(examMarkTotal(annualBySubject[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key).roundToInt(), spec.max + 20) }
+                        .map { spec -> gradePointForExam(examMarkTotal(annualBySubject[spec.key]) + monthlyAverageForSubject(st.id, spec.key).roundToInt(), spec.max + 20) }
                         .average()
 
                     // Annual final/combined total is the average of: First Term total
