@@ -950,20 +950,20 @@ private fun AboutScreen() {
 }
 
 
-private data class ExamSubjectSpec(val name: String, val key: String, val max: Int)
+private data class ExamSubjectSpec(val name: String, val key: String, val max: Int, val hasMcq: Boolean = true, val countsForGpa: Boolean = true)
 
 private val CLASS_6_8_EXAM_SUBJECTS = listOf(
     ExamSubjectSpec("Bangla 1st Paper", "bangla1", 100),
-    ExamSubjectSpec("Bangla 2nd Paper", "bangla2", 40),
+    ExamSubjectSpec("Bangla 2nd Paper", "bangla2", 50),
     ExamSubjectSpec("English 1st Paper", "english1", 40),
-    ExamSubjectSpec("English 2nd Paper", "english2", 40),
+    ExamSubjectSpec("English 2nd Paper", "english2", 50, hasMcq = false),
     ExamSubjectSpec("Mathematics", "math", 100),
     ExamSubjectSpec("Social Sciences", "social", 100),
     ExamSubjectSpec("Science", "science", 100),
     ExamSubjectSpec("Religion", "religion", 100),
-    ExamSubjectSpec("ICT", "ict", 20),
-    ExamSubjectSpec("Agriculture", "agriculture", 16),
-    ExamSubjectSpec("Oral", "oral", 20)
+    ExamSubjectSpec("ICT", "ict", 25, hasMcq = false),
+    ExamSubjectSpec("Agriculture", "agriculture", 20, hasMcq = false),
+    ExamSubjectSpec("Oral", "oral", 10, hasMcq = false, countsForGpa = false)
 )
 
 private fun gradeForExam(total: Int, max: Int): String {
@@ -976,30 +976,79 @@ private fun gradePointForExam(total: Int, max: Int): Double = when (gradeForExam
     "A+" -> 5.0; "A" -> 4.0; "A-" -> 3.5; "B" -> 3.0; "C" -> 2.0; "D" -> 1.0; else -> 0.0
 }
 
+private fun examMarkTotal(mark: ExamMark?): Int = (mark?.cq ?: 0) + (mark?.mcq ?: 0)
+
+private fun monthlySubjectMark(exam: MonthlyExam?, key: String): Int = when (key) {
+    "bangla1", "bangla2" -> exam?.bangla ?: 0
+    "english1", "english2" -> exam?.english ?: 0
+    "math" -> exam?.math ?: 0
+    "social" -> exam?.socialScience ?: 0
+    "science" -> exam?.science ?: 0
+    "religion" -> exam?.religion ?: 0
+    "ict" -> 0
+    "agriculture" -> exam?.hMOrAgri ?: 0
+    "oral" -> 0
+    else -> 0
+}
+
+private fun monthlyTotal(exam: MonthlyExam): Int = listOfNotNull(
+    exam.bangla, exam.english, exam.math, exam.socialScience, exam.science,
+    exam.religion, exam.physics, exam.chemistry, exam.biology, exam.hMOrAgri
+).sum()
+
+private data class StudentResult(
+    val student: Student,
+    val total: Double,
+    val gpa: Double,
+    val monthlyEquivalent: Double,
+    val firstTerm: Double = 0.0,
+    val secondTerm: Double = 0.0,
+    val annualExam: Double = 0.0
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExamResultsScreen(repository: SchoolRepository) {
     val scope = rememberCoroutineScope()
     val students by repository.students("").collectAsState(initial = emptyList())
-    var examType by rememberSaveable { mutableStateOf("Annual Exam") }
+    var examType by rememberSaveable { mutableStateOf("Annual") }
     var className by rememberSaveable { mutableStateOf("6") }
     var section by rememberSaveable { mutableStateOf("A") }
     var subjectIndex by rememberSaveable { mutableIntStateOf(0) }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var marks by remember { mutableStateOf<Map<Long, Pair<String, String>>>(emptyMap()) }
     var allMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
+    var resultRows by remember { mutableStateOf<List<StudentResult>>(emptyList()) }
+    var selectedMonths by rememberSaveable { mutableStateOf(listOf(YearMonth.now().minusMonths(1).toString(), YearMonth.now().minusMonths(2).toString())) }
     var message by remember { mutableStateOf<String?>(null) }
     var showExamType by remember { mutableStateOf(false) }
     var showClass by remember { mutableStateOf(false) }
     var showSection by remember { mutableStateOf(false) }
     var showSubject by remember { mutableStateOf(false) }
+    var showMonths by remember { mutableStateOf(false) }
 
     val subjects = CLASS_6_8_EXAM_SUBJECTS
     val subject = subjects[subjectIndex.coerceIn(0, subjects.lastIndex)]
-    val classStudents = remember(students, className, section) { students.filter { it.className == className && it.section == section }.sortedBy { it.studentId.toIntOrNull() ?: Int.MAX_VALUE } }
+    val classStudents = remember(students, className, section) {
+        students.filter { it.className == className && it.section == section }
+            .sortedBy { it.studentId.toIntOrNull() ?: Int.MAX_VALUE }
+    }
+
+    suspend fun loadExamMarks(type: String): List<ExamMark> {
+        val aliases = when (type) {
+            "First Term" -> listOf("First Term", "1st Term")
+            "Second Term" -> listOf("Second Term", "2nd Term")
+            "Annual" -> listOf("Annual", "Annual Exam")
+            else -> listOf(type)
+        }
+        return aliases.flatMap { repository.examMarksOnce(it) }
+            .distinctBy { Triple(it.studentId, it.subjectKey, it.examType) }
+            .groupBy { it.studentId to it.subjectKey }
+            .map { (_, rows) -> rows.firstOrNull { it.examType == type } ?: rows.first() }
+    }
 
     LaunchedEffect(examType, className, section, subjectIndex, classStudents) {
-        val existing = repository.examMarksOnce(examType)
+        val existing = loadExamMarks(examType)
         allMarks = existing
         val byStudent = existing.filter { it.subjectKey == subject.key }.associate { it.studentId to it }
         marks = classStudents.associate { st ->
@@ -1021,11 +1070,56 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             val saved = classStudents.mapNotNull { st ->
                 val v = marks[st.id] ?: return@mapNotNull null
                 if (v.first.isBlank() && v.second.isBlank()) return@mapNotNull null
-                ExamMark(st.id, examType, subject.key, v.first.toIntOrNull(), v.second.toIntOrNull())
+                ExamMark(st.id, examType, subject.key, v.first.toIntOrNull(), if (subject.hasMcq) v.second.toIntOrNull() else null)
             }
             if (saved.isNotEmpty()) repository.saveExamMarks(saved)
-            allMarks = repository.examMarksOnce(examType)
+            allMarks = loadExamMarks(examType)
             message = "${subject.name} marks saved"
+        }
+    }
+
+    fun calculateResults() {
+        scope.launch {
+            val current = loadExamMarks(examType)
+            val first = loadExamMarks("First Term")
+            val second = loadExamMarks("Second Term")
+            val annual = loadExamMarks("Annual")
+            val monthlyByStudent = classStudents.associate { st ->
+                st.id to selectedMonths.mapNotNull { repository.monthlyExamsOnce(it).firstOrNull { ex -> ex.studentId == st.id } }
+            }
+
+            fun monthlyEquivalent(studentId: Long): Double {
+                val rows = monthlyByStudent[studentId].orEmpty()
+                if (rows.isEmpty()) return 0.0
+                return rows.map { monthlyTotal(it).toDouble() }.average()
+            }
+            fun termTotal(studentId: Long, termMarks: List<ExamMark>): Double {
+                val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
+                return subjects.sumOf { examMarkTotal(bySubject[it.key]) }.toDouble() + monthlyEquivalent(studentId)
+            }
+
+            resultRows = classStudents.map { st ->
+                val monthly = monthlyEquivalent(st.id)
+                val currentBySubject = current.filter { it.studentId == st.id }.associateBy { it.subjectKey }
+                val firstBySubject = first.filter { it.studentId == st.id }.associateBy { it.subjectKey }
+                val secondBySubject = second.filter { it.studentId == st.id }.associateBy { it.subjectKey }
+                val annualBySubject = annual.filter { it.studentId == st.id }.associateBy { it.subjectKey }
+                val source = when (examType) { "First Term" -> firstBySubject; "Second Term" -> secondBySubject; else -> annualBySubject }
+                val applicable = subjects.filter { it.countsForGpa }
+                val fail = applicable.any { gradeForExam(examMarkTotal(source[it.key]), it.max) == "F" }
+                val gpa = if (fail) 0.0 else applicable.map { gradePointForExam(examMarkTotal(source[it.key]), it.max) }.average()
+
+                if (examType == "Annual") {
+                    val annualExam = subjects.sumOf { examMarkTotal(annualBySubject[it.key]) }.toDouble()
+                    val firstTerm = termTotal(st.id, first)
+                    val secondTerm = termTotal(st.id, second)
+                    val finalNumber = (annualExam + monthly + firstTerm + secondTerm) / 3.0
+                    StudentResult(st, finalNumber, gpa, monthly, firstTerm, secondTerm, annualExam)
+                } else {
+                    val examTotal = subjects.sumOf { examMarkTotal(source[it.key]) }.toDouble()
+                    StudentResult(st, examTotal + monthly, gpa, monthly)
+                }
+            }.sortedWith(compareByDescending<StudentResult> { it.gpa }.thenByDescending { it.total })
         }
     }
 
@@ -1038,14 +1132,17 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             Box(Modifier.weight(.6f)) { OutlinedButton({ showSection = true }, Modifier.fillMaxWidth()) { Text("Sec $section") } }
         }
         Spacer(Modifier.height(8.dp))
-        TabRow(selectedTabIndex = tab) { Tab(tab == 0, { tab = 0 }, text = { Text("Enter Marks") }); Tab(tab == 1, { tab = 1 }, text = { Text("Results") }) }
+        TabRow(selectedTabIndex = tab) {
+            Tab(tab == 0, { tab = 0 }, text = { Text("Enter Marks") })
+            Tab(tab == 1, { tab = 1; calculateResults() }, text = { Text("Results") })
+        }
         Spacer(Modifier.height(8.dp))
         if (tab == 0) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text("Subject: ${subject.name} (Max ${subject.max})", fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                 OutlinedButton({ showSubject = true }) { Text("Select") }
             }
-            Text("Enter CQ and MCQ. Total is calculated automatically.", style = MaterialTheme.typography.bodySmall)
+            Text(if (subject.hasMcq) "Enter CQ and MCQ. Total is calculated automatically." else "Enter marks. This subject has no MCQ.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
             LazyColumn(Modifier.weight(1f)) {
                 items(classStudents, key = { it.id }) { st ->
@@ -1053,42 +1150,84 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     val total = (v.first.toIntOrNull() ?: 0) + (v.second.toIntOrNull() ?: 0)
                     Row(Modifier.fillMaxWidth().padding(vertical = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1.3f)) { Text("Roll ${st.studentId}", fontWeight = FontWeight.Bold); Text(st.studentName, maxLines = 1) }
-                        OutlinedTextField(v.first, { update(st.id, cq = it) }, Modifier.width(86.dp), label = { Text("CQ") }, singleLine = true)
-                        Spacer(Modifier.width(5.dp))
-                        OutlinedTextField(v.second, { update(st.id, mcq = it) }, Modifier.width(86.dp), label = { Text("MCQ") }, singleLine = true)
+                        OutlinedTextField(v.first, { update(st.id, cq = it) }, Modifier.width(86.dp), label = { Text("Marks") }, singleLine = true)
+                        if (subject.hasMcq) {
+                            Spacer(Modifier.width(5.dp))
+                            OutlinedTextField(v.second, { update(st.id, mcq = it) }, Modifier.width(86.dp), label = { Text("MCQ") }, singleLine = true)
+                        }
                         Spacer(Modifier.width(5.dp))
                         Text("$total", modifier = Modifier.width(38.dp), fontWeight = FontWeight.Bold)
                     }
                 }
             }
-            Button({ saveAll() }, Modifier.fillMaxWidth(), enabled = classStudents.isNotEmpty()) { Text("Save & Next Subject") }
+            Button({ saveAll() }, Modifier.fillMaxWidth(), enabled = classStudents.isNotEmpty()) { Text("Save Marks") }
         } else {
-            val byStudent = allMarks.groupBy { it.studentId }
-            LazyColumn(Modifier.weight(1f)) {
-                item {
-                    Text("${examType} — Class $className$section", fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Column(Modifier.weight(1f)) {
+                    Text("Monthly Equivalent: ${selectedMonths.size} month(s)", fontWeight = FontWeight.Bold)
+                    Text(selectedMonths.joinToString(", "), style = MaterialTheme.typography.bodySmall)
                 }
-                items(classStudents, key = { it.id }) { st ->
-                    val sm = byStudent[st.id].orEmpty().associateBy { it.subjectKey }
-                    val totals = subjects.map { sp -> val m=sm[sp.key]; ((m?.cq ?: 0)+(m?.mcq ?: 0)) to sp }
-                    val grand = totals.sumOf { it.first }; val max = totals.sumOf { it.second.max }
-                    val fail = totals.count { gradeForExam(it.first, it.second.max) == "F" }
-                    val gp = if (fail > 0) 0.0 else totals.map { gradePointForExam(it.first, it.second.max) }.average()
+                OutlinedButton({ showMonths = true }) { Text("Select 2/3 Months") }
+            }
+            Text("Monthly Equivalent has no GPA. It is calculated from existing Monthly Exam marks and added automatically.", style = MaterialTheme.typography.bodySmall)
+            Spacer(Modifier.height(6.dp))
+            Button({ calculateResults() }, Modifier.fillMaxWidth()) { Text("Calculate / Refresh Results") }
+            Spacer(Modifier.height(6.dp))
+            LazyColumn(Modifier.weight(1f)) {
+                item { Text("$examType — Class $className$section", fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)) }
+                items(resultRows, key = { it.student.id }) { row ->
+                    val rank = resultRows.indexOf(row) + 1
                     Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) { Column(Modifier.padding(10.dp)) {
-                        Text("${st.studentId} — ${st.studentName}", fontWeight = FontWeight.Bold)
-                        Text("Total: $grand / $max   Average: ${if(max>0) String.format("%.1f", grand*100.0/max) else "0.0"}%   GPA: ${String.format("%.2f", gp)}   Fail: $fail")
-                        Text(totals.joinToString("  |  ") { "${it.second.name.take(5)}: ${it.first} (${gradeForExam(it.first,it.second.max)})" }, style=MaterialTheme.typography.bodySmall)
+                        Text("Rank $rank • ${row.student.studentId} — ${row.student.studentName}", fontWeight = FontWeight.Bold)
+                        Text("GPA: ${String.format("%.2f", row.gpa)}   Final Total: ${String.format("%.2f", row.total)}")
+                        Text("Monthly Equivalent: ${String.format("%.2f", row.monthlyEquivalent)}", style = MaterialTheme.typography.bodySmall)
+                        if (examType == "Annual") Text("Annual: ${row.annualExam.toInt()} + Monthly ${row.monthlyEquivalent.toInt()} + 1st Term ${String.format("%.2f", row.firstTerm)} + 2nd Term ${String.format("%.2f", row.secondTerm)} ÷ 3", style = MaterialTheme.typography.bodySmall)
                     } }
                 }
             }
         }
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
     }
-    if (showExamType) { DropdownDialog("Exam", listOf("Annual Exam","1st Term","2nd Term","First Term","Second Term"), { examType=it; showExamType=false }, { showExamType=false }) }
+    if (showExamType) { DropdownDialog("Exam", listOf("First Term", "Second Term", "Annual"), { examType=it; showExamType=false; resultRows=emptyList() }, { showExamType=false }) }
     if (showClass) { DropdownDialog("Class", listOf("6","7","8"), { className=it; subjectIndex=0; showClass=false }, { showClass=false }) }
     if (showSection) { DropdownDialog("Section", listOf("A","B"), { section=it; showSection=false }, { showSection=false }) }
     if (showSubject) { DropdownDialog("Subject", subjects.map { it.name }, { v -> subjectIndex=subjects.indexOfFirst { it.name==v }.coerceAtLeast(0); showSubject=false }, { showSubject=false }) }
+    if (showMonths) {
+        MonthSelectionDialog(
+            selected = selectedMonths,
+            onDone = { selectedMonths = it.sorted(); showMonths = false; calculateResults() },
+            onDismiss = { showMonths = false }
+        )
+    }
+}
+
+@Composable
+private fun MonthSelectionDialog(selected: List<String>, onDone: (List<String>) -> Unit, onDismiss: () -> Unit) {
+    val options = remember { (0..11).map { YearMonth.now().minusMonths(it.toLong()).toString() } }
+    var picked by remember(selected) { mutableStateOf(selected.toSet()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Select 2 or 3 months") },
+        text = {
+            Column {
+                options.forEach { month ->
+                    Row(Modifier.fillMaxWidth().clickable {
+                        picked = if (month in picked) picked - month else if (picked.size < 3) picked + month else picked
+                    }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = month in picked, onCheckedChange = {
+                            picked = if (it && picked.size < 3) picked + month else picked - month
+                        })
+                        Text(month)
+                    }
+                }
+                Text("Selected: ${picked.size}/3", style = MaterialTheme.typography.bodySmall)
+            }
+        },
+        confirmButton = {
+            TextButton(enabled = picked.size == 2 || picked.size == 3, onClick = { onDone(picked.toList()) }) { Text("Apply") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
+    )
 }
 
 @Composable

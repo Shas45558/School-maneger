@@ -1,4 +1,4 @@
-# School Manager v1.3
+# School Manager v1.12
 
 Offline-first Android school manager.
 
@@ -48,3 +48,15 @@ The Google Drive backup password can now be remembered on the current device. En
 - Google sign-in is handled by Google; the app does not collect Gmail passwords.
 - Auto Sync can be enabled from the Google Drive screen. It runs at startup and periodically (Android may delay background work) when an internet connection is available.
 - The database is stored without app-level encryption, as requested.
+
+
+## Classes 6–8 Exams & Results (v1.12)
+- Exam selection: First Term, Second Term, Annual.
+- Bangla 2nd Paper 50, English 2nd Paper 50, Agriculture 20, ICT 25, Oral 10.
+- English 2nd Paper, Agriculture, ICT and Oral have no MCQ input.
+- Oral is excluded from GPA calculation.
+- Monthly Equivalent uses existing Monthly Exam records; teacher selects 2 or 3 months and the selected-month average is added automatically. Monthly Equivalent itself has no GPA.
+- First/Second Term ranking: GPA first, then higher final total.
+- Annual final number follows the requested formula: (Annual Exam + Annual Monthly Equivalent + First Term + Second Term) / 3.
+- Annual ranking uses GPA first, then higher final number.
+- Legacy exam names (1st Term, 2nd Term, Annual Exam) remain readable.
