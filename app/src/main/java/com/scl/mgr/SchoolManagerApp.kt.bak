@@ -1023,8 +1023,8 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     var resultRows by remember { mutableStateOf<List<StudentResult>>(emptyList()) }
     var selectedMonths by rememberSaveable {
         val now = YearMonth.now()
-        val previous = now.minusMonths(1)
-        mutableStateOf(listOf(now.toString(), previous.toString()).filter { it.startsWith(now.year.toString()) })
+        val m2 = now.monthValue.coerceAtLeast(2)
+        mutableStateOf(listOf(YearMonth.of(now.year, m2).toString(), YearMonth.of(now.year, m2 - 1).toString()))
     }
     var message by remember { mutableStateOf<String?>(null) }
     var showExamType by remember { mutableStateOf(false) }
@@ -1062,18 +1062,12 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     }
 
     LaunchedEffect(examType, className, section, subjectIndex, classStudents) {
-        try {
-            val existing = loadExamMarks(examType)
-            allMarks = existing
-            val byStudent = existing.filter { it.subjectKey == subject.key }.associate { it.studentId to it }
-            marks = classStudents.associate { st ->
-                val m = byStudent[st.id]
-                st.id to (m?.cq?.toString().orEmpty() to m?.mcq?.toString().orEmpty())
-            }
-        } catch (t: Throwable) {
-            allMarks = emptyList()
-            marks = classStudents.associate { it.id to ("" to "") }
-            message = "Could not load marks: ${t.message ?: "database error"}"
+        val existing = loadExamMarks(examType)
+        allMarks = existing
+        val byStudent = existing.filter { it.subjectKey == subject.key }.associate { it.studentId to it }
+        marks = classStudents.associate { st ->
+            val m = byStudent[st.id]
+            st.id to (m?.cq?.toString().orEmpty() to m?.mcq?.toString().orEmpty())
         }
     }
 
@@ -1112,8 +1106,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
 
     fun calculateResults() {
         scope.launch {
-            try {
-                val current = loadExamMarks(examType)
+            val current = loadExamMarks(examType)
             val first = loadExamMarks("First Term")
             val second = loadExamMarks("Second Term")
             val annual = loadExamMarks("Annual")
@@ -1200,10 +1193,6 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     compareByDescending<StudentResult> { it.gpa }.thenByDescending { it.total }
                 }
             )
-            } catch (t: Throwable) {
-                resultRows = emptyList()
-                message = "Could not calculate results: ${t.message ?: "database error"}"
-            }
         }
     }
 
@@ -1393,27 +1382,12 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     }
     LaunchedEffect(selectedResultStudent, examType, selectedMonths) {
         val student = selectedResultStudent ?: return@LaunchedEffect
-        try {
-            val currentDetails = loadExamMarks(examType)
-            val firstDetails = loadExamMarks("First Term")
-            val secondDetails = loadExamMarks("Second Term")
-            val annualDetails = loadExamMarks("Annual")
-            val monthlyDetails = selectedMonths.mapNotNull { month ->
-                try { repository.monthlyExamsOnce(month).firstOrNull { it.studentId == student.id } }
-                catch (_: Throwable) { null }
-            }
-            detailMarks = currentDetails
-            detailFirstMarks = firstDetails
-            detailSecondMarks = secondDetails
-            detailAnnualMarks = annualDetails
-            detailMonthlyRows = monthlyDetails
-        } catch (t: Throwable) {
-            detailMarks = emptyList()
-            detailFirstMarks = emptyList()
-            detailSecondMarks = emptyList()
-            detailAnnualMarks = emptyList()
-            detailMonthlyRows = emptyList()
-            message = "Could not load result details: ${t.message ?: "database error"}"
+        detailMarks = loadExamMarks(examType)
+        detailFirstMarks = loadExamMarks("First Term")
+        detailSecondMarks = loadExamMarks("Second Term")
+        detailAnnualMarks = loadExamMarks("Annual")
+        detailMonthlyRows = selectedMonths.mapNotNull { month ->
+            repository.monthlyExamsOnce(month).firstOrNull { it.studentId == student.id }
         }
     }
 
