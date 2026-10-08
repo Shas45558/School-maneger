@@ -13,8 +13,8 @@ android {
         applicationId = "com.scl.mgr"
         minSdk = 26
         targetSdk = 35
-        versionCode = 10
-        versionName = "1.22"
+        versionCode = 11
+        versionName = "1.23"
     }
 
     // Release is optimized to reduce the final APK size.

@@ -1123,6 +1123,15 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             val first = loadExamMarks("First Term")
             val second = loadExamMarks("Second Term")
             val annual = loadExamMarks("Annual")
+            // Keep the detail data in memory while Results is open. The student-card
+            // dialog must not start additional Room queries when it is tapped.
+            detailMarks = current
+            detailFirstMarks = first
+            detailSecondMarks = second
+            detailAnnualMarks = annual
+            detailMonthlyRows = selectedMonths.flatMap { month ->
+                try { repository.monthlyExamsOnce(month).toList() } catch (_: Throwable) { emptyList() }
+            }.distinctBy { it.id }
             val monthlyByStudent = classStudents.associate { st ->
                 st.id to selectedMonths.mapNotNull { repository.monthlyExamsOnce(it).firstOrNull { ex -> ex.studentId == st.id } }
             }
@@ -1397,32 +1406,6 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
 
         message?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
     }
-    LaunchedEffect(selectedResultStudent, examType, selectedMonths) {
-        val student = selectedResultStudent ?: return@LaunchedEffect
-        try {
-            val currentDetails = loadExamMarks(examType)
-            val firstDetails = loadExamMarks("First Term")
-            val secondDetails = loadExamMarks("Second Term")
-            val annualDetails = loadExamMarks("Annual")
-            val monthlyDetails = selectedMonths.mapNotNull { month ->
-                try { repository.monthlyExamsOnce(month).firstOrNull { it.studentId == student.id } }
-                catch (_: Throwable) { null }
-            }
-            detailMarks = currentDetails
-            detailFirstMarks = firstDetails
-            detailSecondMarks = secondDetails
-            detailAnnualMarks = annualDetails
-            detailMonthlyRows = monthlyDetails
-        } catch (t: Throwable) {
-            detailMarks = emptyList()
-            detailFirstMarks = emptyList()
-            detailSecondMarks = emptyList()
-            detailAnnualMarks = emptyList()
-            detailMonthlyRows = emptyList()
-            message = "Could not load result details: ${t.message ?: "database error"}"
-        }
-    }
-
     if (selectedResultStudent != null) {
         val student = selectedResultStudent!!
         val selectedDetail = detailMarks.filter { it.studentId == student.id }
