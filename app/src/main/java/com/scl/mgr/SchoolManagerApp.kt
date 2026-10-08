@@ -1010,6 +1010,33 @@ private data class StudentResult(
     val rankTieAverage: Double = 0.0
 )
 
+private data class StudentDetail(
+    val studentId: Long,
+    val examType: String,
+    val subjectRows: List<DetailSubjectRow>,
+    val examOnlyObtained: Int,
+    val examOnlyMax: Int,
+    val adjustedObtained: Double,
+    val adjustedMax: Double,
+    val monthlyEquivalent: Double,
+    val annualTotal: Double,
+    val firstTotal: Double,
+    val secondTotal: Double,
+    val annualAverage: Double,
+    val gpa: Double,
+    val rank: Int?
+)
+
+private data class DetailSubjectRow(
+    val name: String,
+    val hasMcq: Boolean,
+    val cq: String,
+    val mcq: String,
+    val total: Int,
+    val max: Int,
+    val gpa: Double
+)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ExamResultsScreen(repository: SchoolRepository) {
@@ -1042,6 +1069,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     var detailSecondMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
     var detailAnnualMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
     var detailMonthlyRows by remember { mutableStateOf<List<MonthlyExam>>(emptyList()) }
+    var detailByStudent by remember { mutableStateOf<Map<Long, StudentDetail>>(emptyMap()) }
 
     val subjects = CLASS_6_8_EXAM_SUBJECTS
     val subject = subjects[subjectIndex.coerceIn(0, subjects.lastIndex)]
@@ -1167,6 +1195,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 return subjects.associate { it.key to examMarkTotal(bySubject[it.key]) }
             }
 
+            val computedDetails = mutableMapOf<Long, StudentDetail>()
             resultRows = classStudents.map { st ->
                 val monthly = monthlyEquivalent(st.id)
                 val currentBySubject = current.filter { it.studentId == st.id }.associateBy { it.subjectKey }
@@ -1188,6 +1217,24 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     gradePointForExam(adjusted, spec.max + 20)
                 }.average()
 
+                val examOnly = subjects.sumOf { spec -> examMarkTotal(currentBySubject[spec.key]) }
+                val examMax = subjects.sumOf { it.max }
+                val adjusted = subjects.sumOf { spec -> examMarkTotal(currentBySubject[spec.key]) + monthlyEquivalentForSubject(st.id, spec.key) }
+                val adjustedMax = examMax + subjects.size * 20
+                val subjectRows = subjects.map { spec ->
+                    val mark = source[spec.key]
+                    val totalMark = examMarkTotal(mark)
+                    DetailSubjectRow(
+                        name = spec.name,
+                        hasMcq = spec.hasMcq,
+                        cq = mark?.cq?.toString() ?: "—",
+                        mcq = if (spec.hasMcq) mark?.mcq?.toString() ?: "—" else "—",
+                        total = totalMark,
+                        max = spec.max,
+                        gpa = gradePointForExam(totalMark, spec.max)
+                    )
+                }
+
                 if (examType == "Annual") {
                     // Annual GPA is still based ONLY on the Annual examination, exactly
                     // like the Annual exam itself; First/Second Term never enter Annual GPA.
@@ -1207,9 +1254,11 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                     val secondTotal = examTotal(st.id, second, includeMonthly = true)
                     val combinedAverage = (firstTotal + secondTotal + annualExam) / 3.0
                     val rankTieAverage = combinedAverage
+                    computedDetails[st.id] = StudentDetail(st.id, examType, subjectRows, examOnly, examMax, adjusted, adjustedMax, monthly, annualExam, firstTotal, secondTotal, combinedAverage, annualGpa, null)
                     StudentResult(st, combinedAverage, annualGpa, monthly, firstTerm = firstTotal, secondTerm = secondTotal, annualExam = annualExam, rankTieAverage = rankTieAverage)
                 } else {
                     val termTotal = examTotal(st.id, source.values.toList(), includeMonthly = true)
+                    computedDetails[st.id] = StudentDetail(st.id, examType, subjectRows, examOnly, examMax, adjusted, adjustedMax, monthly, 0.0, 0.0, 0.0, termTotal, termGpa, null)
                     StudentResult(st, termTotal, termGpa, monthly)
                 }
             }.sortedWith(
@@ -1220,7 +1269,11 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 } else {
                     compareByDescending<StudentResult> { it.gpa }.thenByDescending { it.total }
                 }
-            )
+            ).also { sorted ->
+                detailByStudent = sorted.mapIndexedNotNull { index, row ->
+                    computedDetails[row.student.id]?.let { rowDetail -> row.student.id to rowDetail.copy(rank = index + 1) }
+                }.toMap()
+            }
             } catch (t: Throwable) {
                 resultRows = emptyList()
                 message = "Could not calculate results: ${t.message ?: "database error"}"
@@ -1414,84 +1467,63 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     }
     if (selectedResultStudent != null) {
         val student = selectedResultStudent!!
-        val selectedDetail = detailMarks.filter { it.studentId == student.id }
-        val bySubject = selectedDetail.associateBy { it.subjectKey }
-        val firstBySubject = detailFirstMarks.filter { it.studentId == student.id }.associateBy { it.subjectKey }
-        val secondBySubject = detailSecondMarks.filter { it.studentId == student.id }.associateBy { it.subjectKey }
-        val annualBySubject = detailAnnualMarks.filter { it.studentId == student.id }.associateBy { it.subjectKey }
-        val monthlyEquivalentForSubject: (String) -> Double = { key ->
-            if (detailMonthlyRows.isEmpty()) 0.0 else detailMonthlyRows.map { monthlySubjectMark(it, key).toDouble() }.average()
-        }
-        val examOnlyObtained = subjects.sumOf { spec -> examMarkTotal(bySubject[spec.key]) }
-        val examOnlyMax = subjects.sumOf { it.max }
-        val adjustedObtained = subjects.sumOf { spec -> examMarkTotal(bySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
-        val adjustedMax = examOnlyMax + (subjects.size * 20)
-        val row = resultRows.firstOrNull { it.student.id == student.id }
-        val rank = resultRows.indexOfFirst { it.student.id == student.id }.let { if (it >= 0) it + 1 else 0 }
-        val firstTotal = subjects.sumOf { spec -> examMarkTotal(firstBySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
-        val secondTotal = subjects.sumOf { spec -> examMarkTotal(secondBySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
-        val annualTotal = subjects.sumOf { spec -> examMarkTotal(annualBySubject[spec.key]) + monthlyEquivalentForSubject(spec.key) }
-        val annualAverage = (firstTotal + secondTotal + annualTotal) / 3.0
-        val annualCombinedTotal = if (examType == "Annual") annualAverage else adjustedObtained
-        val displayGpa = row?.gpa ?: 0.0
-        val displayRank = if (rank > 0) rank else null
-        AlertDialog(
-            onDismissRequest = { selectedResultStudent = null },
-            title = { Text("${student.studentName} • Full Result") },
-            text = {
-                Column {
-                    Text("Roll ${student.studentId} • $examType", fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(6.dp))
-                    Column(
-                        Modifier
-                            .fillMaxWidth()
-                            .heightIn(max = 420.dp)
-                            .verticalScroll(rememberScrollState())
-                    ) {
-                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                            Text("Subject", Modifier.weight(1.25f), fontWeight = FontWeight.Bold)
-                            Text("CQ", Modifier.weight(.4f), fontWeight = FontWeight.Bold)
-                            Text("MCQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
-                            Text("Total", Modifier.weight(.55f), fontWeight = FontWeight.Bold)
-                            Text("GPA", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
-                        }
-                        subjects.forEach { spec ->
-                            val mark = bySubject[spec.key]
-                            val total = examMarkTotal(mark)
-                            val gp = gradePointForExam(total, spec.max)
+        val detail = detailByStudent[student.id]
+        if (detail != null) {
+            AlertDialog(
+                onDismissRequest = { selectedResultStudent = null },
+                title = { Text("${student.studentName} • Full Result") },
+                text = {
+                    Column {
+                        Text("Roll ${student.studentId} • ${detail.examType}", fontWeight = FontWeight.Bold)
+                        Spacer(Modifier.height(6.dp))
+                        Column(
+                            Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(rememberScrollState())
+                        ) {
                             Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text(spec.name, Modifier.weight(1.25f), maxLines = 2)
-                                Text(mark?.cq?.toString() ?: "—", Modifier.weight(.4f))
-                                Text(if (spec.hasMcq) mark?.mcq?.toString() ?: "—" else "—", Modifier.weight(.45f))
-                                Text("$total/${spec.max}", Modifier.weight(.55f))
-                                Text(String.format("%.2f", gp), Modifier.weight(.5f), fontWeight = FontWeight.Bold)
+                                Text("Subject", Modifier.weight(1.25f), fontWeight = FontWeight.Bold)
+                                Text("CQ", Modifier.weight(.4f), fontWeight = FontWeight.Bold)
+                                Text("MCQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
+                                Text("Total", Modifier.weight(.55f), fontWeight = FontWeight.Bold)
+                                Text("GPA", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
+                            }
+                            detail.subjectRows.forEach { r ->
+                                Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                                    Text(r.name, Modifier.weight(1.25f), maxLines = 2)
+                                    Text(r.cq, Modifier.weight(.4f))
+                                    Text(r.mcq, Modifier.weight(.45f))
+                                    Text("${r.total}/${r.max}", Modifier.weight(.55f))
+                                    Text(String.format("%.2f", r.gpa), Modifier.weight(.5f), fontWeight = FontWeight.Bold)
+                                }
                             }
                         }
+                        Spacer(Modifier.height(8.dp))
+                        Text("Exam Total: ${detail.examOnlyObtained} / ${detail.examOnlyMax}", fontWeight = FontWeight.Bold)
+                        Text("Monthly Equivalent: ${String.format("%.2f", detail.monthlyEquivalent)}")
+                        if (detail.examType == "Annual") {
+                            Text("Annual Total: ${String.format("%.2f", detail.annualTotal)}")
+                            Text("1st Term Mark: ${String.format("%.2f", detail.firstTotal)}")
+                            Text("2nd Term Mark: ${String.format("%.2f", detail.secondTotal)}")
+                            Text("Total: ${String.format("%.2f", detail.firstTotal + detail.secondTotal + detail.annualTotal)}")
+                            Text("Average: ${String.format("%.2f", detail.annualAverage)}", fontWeight = FontWeight.Bold)
+                        } else {
+                            Text("Total: ${String.format("%.2f", detail.adjustedObtained)} / ${String.format("%.2f", detail.adjustedMax)}", fontWeight = FontWeight.Bold)
+                        }
+                        Text("GPA: ${String.format("%.2f", detail.gpa)}", fontWeight = FontWeight.Bold)
+                        detail.rank?.let { Text("Rank: $it", fontWeight = FontWeight.Bold) }
                     }
-                    Spacer(Modifier.height(8.dp))
-                    if (examType == "Annual") {
-                        Text("Exam Total: $examOnlyObtained / $examOnlyMax", fontWeight = FontWeight.Bold)
-                        Text("Monthly Equivalent: ${String.format("%.2f", row?.monthlyEquivalent ?: 0.0)}")
-                        Text("Annual Total: ${String.format("%.2f", annualTotal)}")
-                        Text("1st Term Mark: ${String.format("%.2f", firstTotal)}")
-                        Text("2nd Term Mark: ${String.format("%.2f", secondTotal)}")
-                        Text("Total: ${String.format("%.2f", firstTotal + secondTotal + annualTotal)}")
-                        Text("Average: ${String.format("%.2f", annualCombinedTotal)}", fontWeight = FontWeight.Bold)
-                        Text("GPA: ${String.format("%.2f", displayGpa)}", fontWeight = FontWeight.Bold)
-                        if (displayRank != null) Text("Rank: $displayRank", fontWeight = FontWeight.Bold)
-                    } else {
-                        Text("Exam Total: $examOnlyObtained / $examOnlyMax", fontWeight = FontWeight.Bold)
-                        Text("Monthly Equivalent: ${String.format("%.2f", row?.monthlyEquivalent ?: 0.0)}")
-                        Text("Total: ${String.format("%.2f", adjustedObtained)} / ${String.format("%.2f", adjustedMax)}", fontWeight = FontWeight.Bold)
-                        Text("GPA: ${String.format("%.2f", displayGpa)}", fontWeight = FontWeight.Bold)
-                        if (displayRank != null) Text("Rank: $displayRank", fontWeight = FontWeight.Bold)
-                    }
+                },
+                confirmButton = {
+                    TextButton(onClick = { selectedResultStudent = null }) { Text("Close") }
                 }
-            },
-            confirmButton = {
-                TextButton(onClick = { selectedResultStudent = null }) { Text("Close") }
-            }
-        )
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { selectedResultStudent = null },
+                title = { Text("Result") },
+                text = { Text("Result details are not ready. Please tap Calculate / Refresh Results and try again.") },
+                confirmButton = { TextButton(onClick = { selectedResultStudent = null }) { Text("Close") } }
+            )
+        }
     }
     if (showExamType) { DropdownDialog("Exam", listOf("First Term", "Second Term", "Annual"), { examType=it; showExamType=false; resultRows=emptyList() }, { showExamType=false }) }
     if (showClass) { DropdownDialog("Class", listOf("6","7","8"), { className=it; subjectIndex=0; showClass=false }, { showClass=false }) }

@@ -14,7 +14,7 @@ android {
         minSdk = 26
         targetSdk = 35
         versionCode = 12
-        versionName = "1.25"
+        versionName = "1.26"
     }
 
     // Release is optimized to reduce the final APK size.
