@@ -1170,17 +1170,32 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 st.id to detailMonthlyRows.filter { ex -> ex.studentId == st.id }
             }
 
-            fun monthlyEquivalent(studentId: Long): Double {
-                val rows = monthlyByStudent[studentId].orEmpty()
-                if (rows.isEmpty()) return 0.0
-                return subjects.sumOf { spec ->
-                    rows.map { monthlySubjectMark(it, spec.key).toDouble() }.average()
-                }
-            }
+            // Monthly Equivalent is calculated SUBJECT-BY-SUBJECT.
+            // Only actually entered monthly marks participate in the average;
+            // null/unentered marks must NOT be treated as zero.
             fun monthlyEquivalentForSubject(studentId: Long, subjectKey: String): Double {
                 val rows = monthlyByStudent[studentId].orEmpty()
-                if (rows.isEmpty()) return 0.0
-                return rows.map { monthlySubjectMark(it, subjectKey).toDouble() }.average()
+                val values = rows.mapNotNull { exam ->
+                    when (subjectKey) {
+                        "bangla1", "bangla2" -> exam.bangla
+                        "english1", "english2" -> exam.english
+                        "math" -> exam.math
+                        "social" -> exam.socialScience
+                        "science" -> exam.science
+                        "religion" -> exam.religion
+                        "agriculture" -> exam.hMOrAgri
+                        else -> null
+                    }
+                }.filter { it >= 0 }
+                return if (values.isEmpty()) 0.0 else values.average()
+            }
+
+            fun monthlyEquivalent(studentId: Long): Double {
+                // This is the sum of each subject's own monthly average.
+                // It is intentionally NOT an average of all subjects together.
+                return subjects.sumOf { spec ->
+                    monthlyEquivalentForSubject(studentId, spec.key)
+                }
             }
             fun examTotal(studentId: Long, termMarks: List<ExamMark>, includeMonthly: Boolean = false): Double {
                 val bySubject = termMarks.filter { it.studentId == studentId }.associateBy { it.subjectKey }
