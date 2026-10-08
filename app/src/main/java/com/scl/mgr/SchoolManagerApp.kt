@@ -30,7 +30,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
@@ -1451,17 +1453,20 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
                 Column {
                     Text("Roll ${student.studentId} • $examType", fontWeight = FontWeight.Bold)
                     Spacer(Modifier.height(6.dp))
-                    LazyColumn(Modifier.heightIn(max = 420.dp)) {
-                        item {
-                            Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
-                                Text("Subject", Modifier.weight(1.25f), fontWeight = FontWeight.Bold)
-                                Text("CQ", Modifier.weight(.4f), fontWeight = FontWeight.Bold)
-                                Text("MCQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
-                                Text("Total", Modifier.weight(.55f), fontWeight = FontWeight.Bold)
-                                Text("GPA", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
-                            }
+                    Column(
+                        Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 420.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
+                        Row(Modifier.fillMaxWidth().padding(vertical = 3.dp), verticalAlignment = Alignment.CenterVertically) {
+                            Text("Subject", Modifier.weight(1.25f), fontWeight = FontWeight.Bold)
+                            Text("CQ", Modifier.weight(.4f), fontWeight = FontWeight.Bold)
+                            Text("MCQ", Modifier.weight(.45f), fontWeight = FontWeight.Bold)
+                            Text("Total", Modifier.weight(.55f), fontWeight = FontWeight.Bold)
+                            Text("GPA", Modifier.weight(.5f), fontWeight = FontWeight.Bold)
                         }
-                        items(subjects) { spec ->
+                        subjects.forEach { spec ->
                             val mark = bySubject[spec.key]
                             val total = examMarkTotal(mark)
                             val gp = gradePointForExam(total, spec.max)
