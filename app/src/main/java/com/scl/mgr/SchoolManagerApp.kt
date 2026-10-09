@@ -347,7 +347,7 @@ private fun LoginScreen(
                 scope.launch {
                     try {
                         val result = FirebaseFunctions.getInstance().getHttpsCallable("teacherLogin").call(mapOf("userId" to teacherId.trim().lowercase(), "password" to password)).await()
-                        val token = (result.data as? Map<*, *>)?.get("token") as? String ?: throw IllegalStateException("Backend did not return a login token")
+                        val token = (result.getData() as? Map<*, *>)?.get("token") as? String ?: throw IllegalStateException("Backend did not return a login token")
                         FirebaseAuth.getInstance().signInWithCustomToken(token).await()
                         finishLogin("Teacher")
                     } catch (e: Exception) { error = "Teacher login failed: ${e.message ?: "Check credentials and internet."}" }
