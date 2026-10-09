@@ -1064,6 +1064,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
     var activeStudentId by remember { mutableStateOf<Long?>(null) }
     var activeField by remember { mutableStateOf("cq") }
     var selectedResultStudent by remember { mutableStateOf<Student?>(null) }
+    var resultDisplayOrder by rememberSaveable { mutableStateOf("Roll Number") }
     var detailMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
     var detailFirstMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
     var detailSecondMarks by remember { mutableStateOf<List<ExamMark>>(emptyList()) }
@@ -1394,10 +1395,15 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
         } else {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
-                    Text("Monthly Equivalent: average of ${selectedMonths.size} selected monthly exams", fontWeight = FontWeight.Bold)
+                    Text("Monthly average: ${selectedMonths.size} month(s) selected", fontWeight = FontWeight.Bold)
                     Text(selectedMonths.joinToString(", "), style = MaterialTheme.typography.bodySmall)
                 }
-                OutlinedButton({ showMonths = true }) { Text("Select 2/3 This-Year Months") }
+                OutlinedButton({ showMonths = true }) { Text("Select Months (${selectedMonths.size})") }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("Display order:", fontWeight = FontWeight.Medium)
+                FilterChip(selected = resultDisplayOrder == "Roll Number", onClick = { resultDisplayOrder = "Roll Number" }, label = { Text("Roll Number") })
+                FilterChip(selected = resultDisplayOrder == "Rank", onClick = { resultDisplayOrder = "Rank" }, label = { Text("Rank") })
             }
             Text("Term/Annual total = exam subject marks + selected-month average. Annual GPA uses the Annual exam (including its monthly equivalent); final Annual total and tie-break use the average of the 3 adjusted exam totals.", style = MaterialTheme.typography.bodySmall)
             Spacer(Modifier.height(6.dp))
@@ -1405,8 +1411,11 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             Spacer(Modifier.height(6.dp))
             LazyColumn(Modifier.weight(1f)) {
                 item { Text("$examType — Class $className$section", fontWeight = FontWeight.Bold); Spacer(Modifier.height(6.dp)) }
-                items(resultRows, key = { it.student.id }) { row ->
-                    val rank = resultRows.indexOf(row) + 1
+                items(
+                    if (resultDisplayOrder == "Roll Number") resultRows.sortedWith(compareBy<StudentResult>({ it.student.studentId.toIntOrNull() ?: Int.MAX_VALUE }, { it.student.studentName.lowercase() })) else resultRows,
+                    key = { it.student.id }
+                ) { row ->
+                    val rank = resultRows.indexOfFirst { it.student.id == row.student.id } + 1
                     Card(
                         Modifier
                             .fillMaxWidth()
