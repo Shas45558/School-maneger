@@ -8,6 +8,10 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.net.Uri
 import android.content.Intent
+import android.util.Base64
+import javax.crypto.SecretKeyFactory
+import javax.crypto.spec.PBEKeySpec
+import java.security.SecureRandom
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
@@ -70,6 +74,9 @@ private const val PREFS = "student_form_defaults"
 
 @Composable
 fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncManager) {
+    val context = LocalContext.current
+    val authPrefs = remember { context.getSharedPreferences("school_manager_auth", android.content.Context.MODE_PRIVATE) }
+    var activeRole by remember { mutableStateOf(if (authPrefs.getBoolean("remember", false)) authPrefs.getString("saved_role", null) else null) }
     val drawerState = rememberDrawerState(initialValue = DrawerValue.Closed)
     val scope = rememberCoroutineScope()
     val navController = rememberNavController()
@@ -106,6 +113,7 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
         }
     }
 
+    if (activeRole != null) {
     ModalNavigationDrawer(
         drawerState = drawerState,
         gesturesEnabled = true,
@@ -140,7 +148,8 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
 
                 Column(Modifier.fillMaxHeight().padding(bottom = 16.dp)) {
                     LazyColumn(modifier = Modifier.weight(1f)) {
-                        items(items, key = { it.route }) { item ->
+                        val visibleItems = if (activeRole == "Admin") items else items.filter { it.route !in setOf("settings") }
+                        items(visibleItems, key = { it.route }) { item ->
                             NavigationDrawerItem(
                                 label = {
                                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -157,6 +166,21 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
                                 modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
                             )
                         }
+                    }
+                    if (activeRole == "Admin") {
+                        NavigationDrawerItem(
+                            label = { Text("Authorization") },
+                            icon = { Icon(Icons.Default.Security, contentDescription = null) },
+                            selected = false,
+                            onClick = {
+                                scope.launch { drawerState.close() }
+                                navController.navigate("authorization") {
+                                    popUpTo(navController.graph.findStartDestination().id) { saveState = false }
+                                    launchSingleTop = true
+                                }
+                            },
+                            modifier = Modifier.padding(NavigationDrawerItemDefaults.ItemPadding)
+                        )
                     }
                     HorizontalDivider(Modifier.padding(vertical = 12.dp))
                     NavigationDrawerItem(
@@ -243,6 +267,9 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
                 val name = backStack.arguments?.getString("name") ?: "Feature"
                 AppScaffold(name, drawerState, scope) { DemoScreen(name) }
             }
+            composable("authorization") {
+                AppScaffold("Authorization", drawerState, scope) { AuthorizationScreen(authPrefs) }
+            }
             composable("settings") {
                 AppScaffold("Google Drive", drawerState, scope) {
                     GoogleDriveScreen(syncManager)
@@ -251,6 +278,165 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
             composable("about") {
                 AppScaffold("About", drawerState, scope) { AboutScreen() }
             }
+        }
+    }
+    } else {
+        LoginScreen(
+            syncManager = syncManager,
+            authPrefs = authPrefs,
+            onLogin = { role -> activeRole = role },
+            onRememberChanged = { remember -> authPrefs.edit().putBoolean("remember", remember).apply() }
+        )
+    }
+}
+
+private fun displayMonthYear(value: String): String = try {
+    YearMonth.parse(value).format(DateTimeFormatter.ofPattern("MMMM-yy", java.util.Locale.ENGLISH))
+} catch (_: Exception) { value }
+
+private fun passwordDigest(password: String, salt: ByteArray): String {
+    val spec = PBEKeySpec(password.toCharArray(), salt, 120_000, 256)
+    return try {
+        Base64.encodeToString(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded, Base64.NO_WRAP)
+    } finally { spec.clearPassword() }
+}
+
+@Composable
+private fun LoginScreen(
+    syncManager: GoogleDriveSyncManager,
+    authPrefs: android.content.SharedPreferences,
+    onLogin: (String) -> Unit,
+    onRememberChanged: (Boolean) -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var rememberMe by remember { mutableStateOf(authPrefs.getBoolean("remember", false)) }
+    var teacherId by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var error by remember { mutableStateOf("") }
+    var busy by remember { mutableStateOf(false) }
+    var launchRecovery: ((Intent) -> Unit)? = null
+    fun finishLogin(role: String) {
+        authPrefs.edit().putBoolean("remember", rememberMe).apply()
+        if (rememberMe) authPrefs.edit().putString("saved_role", role).apply()
+        else authPrefs.edit().remove("saved_role").apply()
+        onRememberChanged(rememberMe)
+        onLogin(role)
+    }
+    val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+        try {
+            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(ApiException::class.java)
+            busy = true
+            error = "Google sign-in successful. Syncing database…"
+            scope.launch {
+                try {
+                    syncManager.sync(account)
+                    error = ""
+                } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
+                    error = "Drive permission required. Please authorize Drive and try again."
+                    launchRecovery?.invoke(e.recoveryIntent)
+                    busy = false
+                    return@launch
+                } catch (e: Exception) {
+                    // Personal-use mode: valid Google sign-in opens Admin even if Drive is temporarily unavailable.
+                    error = "Signed in, but sync failed: ${e.message ?: "unknown error"}"
+                }
+                busy = false
+                finishLogin("Admin")
+            }
+        } catch (e: Exception) {
+            busy = false
+            error = "Google sign-in failed: ${e.message ?: "Please try again."}"
+        }
+    }
+    launchRecovery = { signInLauncher.launch(it) }
+    val signInClient = remember(context) {
+        GoogleSignIn.getClient(context, GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail().requestScopes(Scope(GoogleDriveSyncManager.DRIVE_FILE_SCOPE)).build())
+    }
+    Column(
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Spacer(Modifier.height(32.dp))
+        Icon(Icons.Default.School, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+        Text("School Manager", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
+        Text("Choose how to sign in", style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = { error = ""; signInLauncher.launch(signInClient.signInIntent) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+            Icon(Icons.Default.AccountCircle, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Admin — Google Sign-In")
+        }
+        HorizontalDivider()
+        Text("Teacher login", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        OutlinedTextField(teacherId, { teacherId = it.trim(); error = "" }, label = { Text("User ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(password, { password = it; error = "" }, label = { Text("Password") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        Button(onClick = {
+            val id = teacherId.trim().lowercase()
+            val saltText = authPrefs.getString("teacher_salt_$id", null)
+            val stored = authPrefs.getString("teacher_hash_$id", null)
+            if (saltText == null || stored == null || passwordDigest(password, Base64.decode(saltText, Base64.NO_WRAP)) != stored) {
+                error = "Invalid User ID or password. Ask Admin to create your account."
+            } else {
+                busy = true
+                val account = GoogleSignIn.getLastSignedInAccount(context)
+                if (account == null) {
+                    busy = false
+                    error = "Logged in. No Google account is connected, so database sync was skipped."
+                    finishLogin("Teacher")
+                } else scope.launch {
+                    try { syncManager.sync(account); error = "" }
+                    catch (e: Exception) { error = "Login successful, but sync failed: ${e.message ?: "unknown error"}" }
+                    busy = false
+                    finishLogin("Teacher")
+                }
+            }
+        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Please wait…" else "Sign in as Teacher") }
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+            Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it; onRememberChanged(it); if (!it) authPrefs.edit().remove("saved_role").apply() })
+            Text("Remember me — skip login next time")
+        }
+        if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+        Text("Teacher accounts are stored on this device; passwords are saved as salted hashes.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun AuthorizationScreen(authPrefs: android.content.SharedPreferences) {
+    var userId by remember { mutableStateOf("") }
+    var password by remember { mutableStateOf("") }
+    var confirmPassword by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }
+    var accounts by remember { mutableStateOf(authPrefs.all.keys.filter { it.startsWith("teacher_hash_") }.map { it.removePrefix("teacher_hash_") }.sorted()) }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Text("Create Teacher Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        OutlinedTextField(userId, { userId = it.trim() }, label = { Text("New User ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(confirmPassword, { confirmPassword = it }, label = { Text("Confirm password") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        Button(onClick = {
+            val id = userId.trim().lowercase()
+            when {
+                id.isBlank() || password.length < 4 -> message = "Enter a User ID and a password of at least 4 characters."
+                password != confirmPassword -> message = "Passwords do not match."
+                authPrefs.contains("teacher_hash_$id") -> message = "That User ID already exists."
+                else -> {
+                    val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
+                    authPrefs.edit().putString("teacher_salt_$id", Base64.encodeToString(salt, Base64.NO_WRAP))
+                        .putString("teacher_hash_$id", passwordDigest(password, salt)).apply()
+                    accounts = authPrefs.all.keys.filter { it.startsWith("teacher_hash_") }.map { it.removePrefix("teacher_hash_") }.sorted()
+                    userId = ""; password = ""; confirmPassword = ""; message = "Teacher account created."
+                }
+            }
+        }, modifier = Modifier.fillMaxWidth()) { Text("Create User") }
+        if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.primary)
+        HorizontalDivider()
+        Text("Teacher accounts (${accounts.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        if (accounts.isEmpty()) Text("No teacher accounts created yet.")
+        accounts.forEach { id ->
+            ListItem(headlineContent = { Text(id) }, supportingContent = { Text("Password stored as salted hash") }, trailingContent = {
+                IconButton(onClick = {
+                    authPrefs.edit().remove("teacher_salt_$id").remove("teacher_hash_$id").apply()
+                    accounts = accounts - id; message = "Account $id deleted."
+                }) { Icon(Icons.Default.Delete, contentDescription = "Delete $id") }
+            })
         }
     }
 }
@@ -1396,7 +1582,7 @@ private fun ExamResultsScreen(repository: SchoolRepository) {
             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Column(Modifier.weight(1f)) {
                     Text("Monthly average: ${selectedMonths.size} month(s) selected", fontWeight = FontWeight.Bold)
-                    Text(selectedMonths.joinToString(", "), style = MaterialTheme.typography.bodySmall)
+                    Text(selectedMonths.joinToString(", ") { displayMonthYear(it) }, style = MaterialTheme.typography.bodySmall)
                 }
                 OutlinedButton({ showMonths = true }) { Text("Select Months (${selectedMonths.size})") }
             }
@@ -1586,7 +1772,7 @@ private fun MonthSelectionDialog(selected: List<String>, onDone: (List<String>) 
                         Checkbox(checked = month in picked, onCheckedChange = {
                             picked = if (it && picked.size < 12) picked + month else picked - month
                         })
-                        Text(month)
+                        Text(displayMonthYear(month))
                     }
                 }
                 Text("Selected: ${picked.size}/12", style = MaterialTheme.typography.bodySmall)
