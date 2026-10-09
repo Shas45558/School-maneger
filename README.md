@@ -1,7 +1,19 @@
-SchoolManager v1.37 — KSP MissingType build fix
+# School Manager v1.40 — Firebase migration (in progress)
 
-Changes:
-- Added an explicit androidx.sqlite:sqlite:2.4.0 dependency so KSP can resolve Room's SupportSQLiteDatabase/migration API types in CI.
-- Updated Android versionCode/versionName to 16 / 1.37.
+This package removes Google Drive-based database synchronization and moves sign-in/teacher account actions toward Firebase.
 
-Validation: ZIP integrity checked. A full Android build was not run in this environment because the Gradle wrapper JAR is not included.
+## Included
+- Android app source, preserving the local Room database.
+- Firebase Authentication Google sign-in for the allowlisted admin email `shas45558@gmail.com`.
+- Teacher login and admin-created teacher accounts through Firebase Callable Functions.
+- Firestore security rules and Firebase Functions source under `firebase/`.
+- Supplied Firebase configuration for Android package `com.scl.mgr` and Web OAuth client ID.
+
+## Important limitations
+- **Room↔Firestore synchronization of students, attendance, monthly exams and exam marks is not implemented yet.** The Sync screen currently checks Firebase authentication status only; it does not sync records.
+- The cloud database is intended to start empty. Existing Room data remains on-device and is not automatically uploaded or erased.
+- Deploy `firebase/functions` and `firebase/firestore.rules` before testing teacher account creation/login. Review App Check, abuse protection and rate limiting before production.
+- Google Cloud still needs an Android OAuth client with package `com.scl.mgr` and the correct release SHA-1. The Web OAuth client ID does not replace it.
+- A full Android build could not be run in this environment because `gradle-wrapper.jar` is absent. The provided GitHub Actions workflow bootstraps the wrapper; run CI and test on a device before release.
+
+See `FIREBASE_SETUP_STATUS.md` for status and next steps.

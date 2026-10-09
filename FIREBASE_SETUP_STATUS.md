@@ -1,21 +1,20 @@
-# Firebase integration status (School Manager v1.38 base)
+# Firebase migration status — School Manager
 
-## Applied in this source package
-- Added the Google Services Gradle plugin.
-- Added Firebase Auth and Cloud Firestore Android dependencies.
-- Added the supplied `google-services.json` for project `school-manager-b0578` and Android package `com.scl.mgr`.
-- Added an app-side Admin email check for `shas45558@gmail.com` before the existing Admin flow proceeds.
+## Completed in this source package
+- Removed Google Drive sync manager, Drive OAuth scope requests, Drive-specific background workers/scheduler, Drive backup manager, and OkHttp Drive API dependency.
+- Kept the existing Room database and did not clear or upload local records.
+- Admin sign-in now exchanges Google Sign-In ID token for Firebase Authentication credentials and checks the allowlisted email `shas45558@gmail.com` in the app.
+- Teacher sign-in calls the trusted `teacherLogin` Firebase Callable Function and uses the returned Firebase custom token.
+- Admin teacher creation calls the trusted `adminCreateTeacher` Firebase Callable Function; server-side code hashes passwords with bcrypt.
+- Added Firebase Functions and coroutine Task-await dependencies. Web OAuth client ID is configured for Google ID-token requests.
+- Firestore rules and Cloud Functions starter files are in `../firebase/`.
 
-## Important: cloud migration is NOT complete
-The current app's repository and synchronization manager still use the local Room database and Google Drive backup flow. These edits do not yet migrate student/attendance/monthly-exam/exam-mark records to Firestore, and teacher login is still the existing local/Drive-based implementation. Do not distribute this as a completed cloud-sync build.
+## Not yet complete / do not treat as production-ready
+- Student, attendance, monthly-exam and exam-mark bidirectional Room↔Firestore synchronization is **not implemented yet**. The Sync page currently reports Firebase sign-in status and does not claim to sync records.
+- Google Cloud still needs an Android OAuth client matching package `com.scl.mgr` and the release signing SHA-1; the Web client ID is not a replacement for that Android client.
+- Deploy the Cloud Functions and Firestore rules before testing teacher account creation/login.
+- Harden callable functions with App Check, rate limiting and production review before release.
+- This source package could not be built here because the Gradle wrapper JAR is absent; the repository's GitHub Actions workflow bootstraps the wrapper before building. Run CI and test login flows before installing.
 
-## Required before a secure production release
-1. Implement teacher sign-in using Firebase Authentication (app User ID mapped to a non-email login identity or a trusted backend that issues Firebase custom tokens). Do not store plaintext passwords in Firestore or trust client-side password checks.
-2. Implement Firestore data model and bidirectional sync for students, attendance, monthly exams, exam marks, and teacher authorization.
-3. Deploy Firestore Security Rules that only permit authenticated and authorized users to access this school's data. Do not use public read/write rules.
-4. Link Google Sign-In to Firebase Authentication (request an ID token, then authenticate with `GoogleAuthProvider`) and enforce the admin email allowlist in trusted rules/backend, not only UI code.
-5. Build in GitHub Actions and test admin/teacher logins plus multi-device sync before release.
-
-Firebase project: `school-manager-b0578`
-Android package: `com.scl.mgr`
-Admin allowlist: `shas45558@gmail.com`
+## Data safety
+The cloud database is intended to start empty. Existing local Room records are left on-device and are not automatically uploaded or deleted by this migration step.

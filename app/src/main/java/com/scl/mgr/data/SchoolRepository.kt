@@ -48,9 +48,6 @@ class SchoolRepository(private val db: AppDatabase, private val context: Context
 
     suspend fun saveMonthlyExams(exams: List<MonthlyExam>) {
         db.monthlyExamDao().upsertAll(exams)
-        // Marks entered in Monthly Exam are immediately queued for Drive sync
-        // when Auto Sync is enabled. WorkManager waits for a network connection.
-        SyncScheduler.scheduleChangeSync(context)
     }
 
     suspend fun monthlyExamsOnce(yearMonth: String): List<MonthlyExam> = db.monthlyExamDao().getForMonth(yearMonth)
@@ -59,7 +56,6 @@ class SchoolRepository(private val db: AppDatabase, private val context: Context
 
     suspend fun saveExamMarks(marks: List<ExamMark>) {
         db.examMarkDao().upsertAll(marks)
-        SyncScheduler.scheduleChangeSync(context)
     }
 
     suspend fun studentAbsentCountBetween(studentId: Long, startDate: String, endDate: String): Int = db.attendanceDao().studentAbsentCountBetween(studentId, startDate, endDate)

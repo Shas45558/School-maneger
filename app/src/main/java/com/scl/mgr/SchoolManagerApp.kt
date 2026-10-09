@@ -8,10 +8,6 @@ import android.os.Environment
 import android.provider.MediaStore
 import android.net.Uri
 import android.content.Intent
-import android.util.Base64
-import javax.crypto.SecretKeyFactory
-import javax.crypto.spec.PBEKeySpec
-import java.security.SecureRandom
 import android.graphics.Paint
 import android.graphics.pdf.PdfDocument
 import androidx.core.content.FileProvider
@@ -47,16 +43,14 @@ import androidx.navigation.NavGraph.Companion.findStartDestination
 import androidx.navigation.compose.*
 import androidx.navigation.navArgument
 import com.google.android.gms.auth.api.signin.GoogleSignIn
-import com.google.android.gms.auth.api.signin.GoogleSignInOptions
-import com.google.android.gms.common.api.ApiException
-import com.google.android.gms.common.api.Scope
-import com.scl.mgr.data.GoogleDriveSyncManager
-import com.scl.mgr.data.AutoSyncWorker
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.functions.FirebaseFunctions
+import kotlinx.coroutines.tasks.await
 import com.scl.mgr.data.SchoolRepository
 import com.scl.mgr.data.Student
 import com.scl.mgr.data.MonthlyExam
 import com.scl.mgr.data.AppDatabase
-import com.scl.mgr.data.TeacherAccount
 import com.scl.mgr.data.ExamMark
 import java.time.LocalDate
 import java.time.YearMonth
@@ -75,7 +69,7 @@ private data class DrawerItem(
 private const val PREFS = "student_form_defaults"
 
 @Composable
-fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncManager) {
+fun SchoolManagerApp(repository: SchoolRepository) {
     val context = LocalContext.current
     val authPrefs = remember { context.getSharedPreferences("school_manager_auth", android.content.Context.MODE_PRIVATE) }
     var activeRole by remember { mutableStateOf(if (authPrefs.getBoolean("remember", false)) authPrefs.getString("saved_role", null) else null) }
@@ -270,11 +264,11 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
                 AppScaffold(name, drawerState, scope) { DemoScreen(name) }
             }
             composable("authorization") {
-                AppScaffold("Authorization", drawerState, scope) { AuthorizationScreen(authPrefs, syncManager) }
+                AppScaffold("Authorization", drawerState, scope) { AuthorizationScreen() }
             }
             composable("settings") {
                 AppScaffold("Sync", drawerState, scope) {
-                    GoogleDriveScreen(syncManager)
+                    FirebaseSyncScreen()
                 }
             }
             composable("about") {
@@ -284,7 +278,6 @@ fun SchoolManagerApp(repository: SchoolRepository, syncManager: GoogleDriveSyncM
     }
     } else {
         LoginScreen(
-            syncManager = syncManager,
             authPrefs = authPrefs,
             onLogin = { role -> activeRole = role },
             onRememberChanged = { remember -> authPrefs.edit().putBoolean("remember", remember).apply() }
@@ -296,16 +289,8 @@ private fun displayMonthYear(value: String): String = try {
     YearMonth.parse(value).format(DateTimeFormatter.ofPattern("MMMM-yy", java.util.Locale.ENGLISH))
 } catch (_: Exception) { value }
 
-private fun passwordDigest(password: String, salt: ByteArray): String {
-    val spec = PBEKeySpec(password.toCharArray(), salt, 120_000, 256)
-    return try {
-        Base64.encodeToString(SecretKeyFactory.getInstance("PBKDF2WithHmacSHA256").generateSecret(spec).encoded, Base64.NO_WRAP)
-    } finally { spec.clearPassword() }
-}
-
 @Composable
 private fun LoginScreen(
-    syncManager: GoogleDriveSyncManager,
     authPrefs: android.content.SharedPreferences,
     onLogin: (String) -> Unit,
     onRememberChanged: (Boolean) -> Unit
@@ -317,214 +302,92 @@ private fun LoginScreen(
     var password by remember { mutableStateOf("") }
     var error by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
-    var launchRecovery: ((Intent) -> Unit)? = null
     fun finishLogin(role: String) {
         authPrefs.edit().putBoolean("remember", rememberMe).apply()
         if (rememberMe) authPrefs.edit().putString("saved_role", role).apply()
         else authPrefs.edit().remove("saved_role").apply()
-        onRememberChanged(rememberMe)
-        onLogin(role)
+        onRememberChanged(rememberMe); onLogin(role)
     }
     val signInLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         try {
-            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(ApiException::class.java)
+            val account = GoogleSignIn.getSignedInAccountFromIntent(result.data).result
             if (!account.email.equals("shas45558@gmail.com", ignoreCase = true)) {
-                GoogleSignIn.getClient(context, GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
-                error = "Admin access denied. Only the authorized administrator account can sign in."
-                busy = false
-                return@rememberLauncherForActivityResult
-            }
-            busy = true
-            error = "Authorized admin signed in. Syncing database…"
-            scope.launch {
-                try {
-                    syncManager.sync(account)
-                    context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE)
-                        .edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, true).apply()
-                    error = ""
-                } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
-                    error = "Drive permission required. Please authorize Drive and try again."
-                    launchRecovery?.invoke(e.recoveryIntent)
-                    busy = false
-                    return@launch
-                } catch (e: Exception) {
-                    // Personal-use mode: valid Google sign-in opens Admin even if Drive is temporarily unavailable.
-                    error = "Signed in, but sync failed: ${e.message ?: "unknown error"}"
+                GoogleSignIn.getClient(context, com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN).signOut()
+                error = "Admin access denied. Only the authorized administrator account can sign in."; busy = false
+            } else {
+                busy = true
+                scope.launch {
+                    try {
+                        val credential = GoogleAuthProvider.getCredential(account.idToken, null)
+                        FirebaseAuth.getInstance().signInWithCredential(credential).await()
+                        error = ""; finishLogin("Admin")
+                    } catch (e: Exception) { error = "Firebase admin sign-in failed: ${e.message ?: "Try again."}" }
+                    finally { busy = false }
                 }
-                context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE)
-                    .edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, true).apply()
-                busy = false
-                finishLogin("Admin")
             }
-        } catch (e: Exception) {
-            busy = false
-            error = "Google sign-in failed: ${e.message ?: "Please try again."}"
-        }
+        } catch (e: Exception) { busy = false; error = "Google sign-in failed: ${e.message ?: "Try again."}" }
     }
-    launchRecovery = { signInLauncher.launch(it) }
     val signInClient = remember(context) {
-        GoogleSignIn.getClient(context, GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-            .requestEmail().requestScopes(Scope(GoogleDriveSyncManager.DRIVE_FILE_SCOPE)).build())
+        GoogleSignIn.getClient(context, com.google.android.gms.auth.api.signin.GoogleSignInOptions.Builder(com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN)
+            .requestEmail().requestIdToken("632798008209-3aoq8i0auppniis706rirti9iuuebog2.apps.googleusercontent.com").build())
     }
-    var teacherCloudConnected by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context) != null) }
-    val teacherCloudLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
-        try {
-            val cloudAccount = GoogleSignIn.getSignedInAccountFromIntent(result.data).getResult(ApiException::class.java)
-            busy = true
-            scope.launch {
-                try {
-                    syncManager.sync(cloudAccount)
-                    context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE)
-                        .edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, true).apply()
-                    teacherCloudConnected = true
-                    error = "Cloud sync connected. You can now sign in with your Teacher ID."
-                } catch (e: Exception) {
-                    error = "Google connected, but sync failed: ${e.message ?: "Unknown error"}"
-                } finally { busy = false }
-            }
-        } catch (e: Exception) { error = "Google sign-in failed: ${e.message ?: "Please try again."}" }
-    }
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Spacer(Modifier.height(32.dp))
-        Icon(Icons.Default.School, contentDescription = null, modifier = Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Icon(Icons.Default.School, null, Modifier.size(64.dp), tint = MaterialTheme.colorScheme.primary)
         Text("School Manager", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold)
-        Text("Choose how to sign in", style = MaterialTheme.typography.bodyMedium)
-        Button(onClick = { error = ""; signInLauncher.launch(signInClient.signInIntent) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-            Icon(Icons.Default.AccountCircle, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Admin — Google Sign-In")
-        }
-        if (!teacherCloudConnected) {
-            OutlinedButton(onClick = { error = ""; teacherCloudLauncher.launch(signInClient.signInIntent) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                Icon(Icons.Default.Cloud, contentDescription = null); Spacer(Modifier.width(8.dp)); Text("Connect Google for Teacher Sync")
-            }
-        }
+        Text("Sign in with Firebase", style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = { error = ""; busy = true; signInLauncher.launch(signInClient.signInIntent) }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Admin — Google Sign-In") }
         HorizontalDivider()
         Text("Teacher login", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
         OutlinedTextField(teacherId, { teacherId = it.trim(); error = "" }, label = { Text("User ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         OutlinedTextField(password, { password = it; error = "" }, label = { Text("Password") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         Button(onClick = {
-            val id = teacherId.trim().lowercase()
-            if (id.isBlank() || password.isBlank()) {
-                error = "Enter User ID and password."
-            } else {
-                busy = true
+            if (teacherId.isBlank() || password.isBlank()) { error = "Enter User ID and password." }
+            else {
+                busy = true; error = ""
                 scope.launch {
                     try {
-                        val db = AppDatabase.get(context)
-                        // Download/merge cloud accounts before checking credentials.
-                        val account = GoogleSignIn.getLastSignedInAccount(context)
-                        if (account != null) {
-                            syncManager.sync(account)
-                            context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE)
-                                .edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, true).apply()
-                        }
-                        val saved = db.teacherAccountDao().getByUserId(id)
-                        val valid = saved != null && passwordDigest(password, Base64.decode(saved.salt, Base64.NO_WRAP)) == saved.passwordHash
-                        if (!valid) {
-                            error = if (account == null) "Invalid User ID/password, or this device has not synced teacher accounts. Sign in with a Google account that has access to the shared Drive folder, then try again." else "Invalid User ID or password. Ask Admin to create your account."
-                        } else {
-                            error = ""
-                            finishLogin("Teacher")
-                        }
-                    } catch (e: Exception) {
-                        error = "Could not sync/verify teacher account: ${e.message ?: "Unknown error"}"
-                    } finally { busy = false }
+                        val result = FirebaseFunctions.getInstance().getHttpsCallable("teacherLogin").call(mapOf("userId" to teacherId.trim().lowercase(), "password" to password)).await()
+                        val token = (result.data as? Map<*, *>)?.get("token") as? String ?: throw IllegalStateException("Backend did not return a login token")
+                        FirebaseAuth.getInstance().signInWithCustomToken(token).await()
+                        finishLogin("Teacher")
+                    } catch (e: Exception) { error = "Teacher login failed: ${e.message ?: "Check credentials and internet."}" }
+                    finally { busy = false }
                 }
             }
-        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Syncing and checking…" else "Sign in as Teacher") }
+        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Signing in…" else "Sign in as Teacher") }
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Checkbox(checked = rememberMe, onCheckedChange = { rememberMe = it; onRememberChanged(it); if (!it) authPrefs.edit().remove("saved_role").apply() })
             Text("Remember me — skip login next time")
         }
         if (error.isNotBlank()) Text(error, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
-        Text("Teacher accounts are stored in the shared database as salted password hashes. A Google account with access to the shared Drive folder is needed for first-time cloud sync on a device.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
+
 @Composable
-private fun AuthorizationScreen(authPrefs: android.content.SharedPreferences, syncManager: GoogleDriveSyncManager) {
-    val context = LocalContext.current
+private fun AuthorizationScreen() {
     val scope = rememberCoroutineScope()
-    var userId by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var confirmPassword by remember { mutableStateOf("") }
-    var message by remember { mutableStateOf("") }
-    var accounts by remember { mutableStateOf<List<String>>(emptyList()) }
-    LaunchedEffect(Unit) {
-        val db = AppDatabase.get(context)
-        // Migrate accounts created in v1.35-v1.37 from local preferences into the shared DB.
-        authPrefs.all.keys.filter { it.startsWith("teacher_hash_") }.forEach { key ->
-            val id = key.removePrefix("teacher_hash_")
-            val salt = authPrefs.getString("teacher_salt_$id", null)
-            val hash = authPrefs.getString(key, null)
-            if (salt != null && hash != null && db.teacherAccountDao().getByUserId(id) == null) {
-                db.teacherAccountDao().upsert(TeacherAccount(id, salt, hash))
-            }
-        }
-        accounts = db.teacherAccountDao().getAllOnce().map { it.userId }
-        val googleAccount = GoogleSignIn.getLastSignedInAccount(context)
-        if (googleAccount != null) {
-            try {
-                syncManager.sync(googleAccount)
-                context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE)
-                    .edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, true).apply()
-            } catch (_: Exception) { /* The Sync page can retry when the network or Drive is unavailable. */ }
-        }
-    }
+    var userId by remember { mutableStateOf("") }; var password by remember { mutableStateOf("") }; var confirmPassword by remember { mutableStateOf("") }
+    var message by remember { mutableStateOf("") }; var busy by remember { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Text("Create Teacher Account", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+        Text("Only the authorized administrator can create accounts. Credentials are verified by the Firebase backend.")
         OutlinedTextField(userId, { userId = it.trim() }, label = { Text("New User ID") }, singleLine = true, modifier = Modifier.fillMaxWidth())
-        OutlinedTextField(password, { password = it }, label = { Text("Password") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+        OutlinedTextField(password, { password = it }, label = { Text("Password (at least 10 characters)") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
         OutlinedTextField(confirmPassword, { confirmPassword = it }, label = { Text("Confirm password") }, singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
-        Button(onClick = {
-            val id = userId.trim().lowercase()
-            scope.launch {
-                val db = AppDatabase.get(context)
-                when {
-                    id.isBlank() || password.length < 4 -> message = "Enter a User ID and a password of at least 4 characters."
-                    password != confirmPassword -> message = "Passwords do not match."
-                    db.teacherAccountDao().getByUserId(id) != null -> message = "That User ID already exists."
-                    else -> {
-                        val salt = ByteArray(16).also { SecureRandom().nextBytes(it) }
-                        db.teacherAccountDao().upsert(TeacherAccount(id, Base64.encodeToString(salt, Base64.NO_WRAP), passwordDigest(password, salt)))
-                        accounts = db.teacherAccountDao().getAllOnce().map { it.userId }
-                        userId = ""; password = ""; confirmPassword = ""
-                        val googleAccount = GoogleSignIn.getLastSignedInAccount(context)
-                        if (googleAccount != null) {
-                            try {
-                                syncManager.sync(googleAccount)
-                                context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE)
-                                    .edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, true).apply()
-                                message = "Teacher account created and synced to Drive."
-                            } catch (e: Exception) {
-                                message = "Teacher account created locally; sync failed: ${e.message ?: "Unknown error"}. Use Sync to retry."
-                            }
-                        } else {
-                            message = "Teacher account created locally. Connect Google in Sync to share it with other devices."
-                        }
-                    }
-                }
+        Button(enabled = !busy, onClick = {
+            when { userId.isBlank() || password.length < 10 -> message = "Enter a User ID and a password of at least 10 characters."; password != confirmPassword -> message = "Passwords do not match."; else -> {
+                busy = true; message = ""
+                scope.launch { try {
+                    FirebaseFunctions.getInstance().getHttpsCallable("adminCreateTeacher").call(mapOf("userId" to userId.trim().lowercase(), "password" to password)).await()
+                    message = "Teacher account created."; userId = ""; password = ""; confirmPassword = ""
+                } catch (e: Exception) { message = "Could not create account: ${e.message ?: "Unknown error"}" } finally { busy = false } }
             }
-        }, modifier = Modifier.fillMaxWidth()) { Text("Create User") }
+        }, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Creating…" else "Create User") }
         if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.primary)
-        HorizontalDivider()
-        Text("Teacher accounts (${accounts.size})", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        if (accounts.isEmpty()) Text("No teacher accounts created yet.")
-        accounts.forEach { id ->
-            ListItem(headlineContent = { Text(id) }, supportingContent = { Text("Password stored as salted hash in database") }, trailingContent = {
-                IconButton(onClick = {
-                    scope.launch {
-                        AppDatabase.get(context).teacherAccountDao().deleteByUserId(id)
-                        accounts = AppDatabase.get(context).teacherAccountDao().getAllOnce().map { it.userId }
-                        message = "Account $id deleted locally. Run Sync to publish database changes."
-                    }
-                }) { Icon(Icons.Default.Delete, contentDescription = "Delete $id") }
-            })
-        }
     }
 }
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -1058,131 +921,20 @@ private fun StudentDetailsScreen(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun GoogleDriveScreen(syncManager: GoogleDriveSyncManager) {
+private fun FirebaseSyncScreen() {
     val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val prefs = remember { context.getSharedPreferences(AutoSyncWorker.PREFS, android.content.Context.MODE_PRIVATE) }
-    var account by remember { mutableStateOf(GoogleSignIn.getLastSignedInAccount(context)) }
-    var status by remember { mutableStateOf<String?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    var autoSync by remember { mutableStateOf(prefs.getBoolean(AutoSyncWorker.KEY_AUTO_SYNC, false)) }
-    var launchRecovery: ((android.content.Intent) -> Unit)? = null
-
-    fun performSync(selected: com.google.android.gms.auth.api.signin.GoogleSignInAccount) {
-        busy = true
-        status = "Syncing Google Drive…"
-        scope.launch {
-            try {
-                val result = syncManager.sync(selected)
-                prefs.edit().putLong(AutoSyncWorker.KEY_LAST_SYNC, System.currentTimeMillis()).apply()
-                status = if (result.restored) {
-                    "Drive database synced. Added ${result.studentsAdded} student(s), ${result.attendanceAdded} attendance record(s), and ${result.monthlyExamsAdded} exam record(s)."
-                } else {
-                    "No database found. The current database was uploaded to the shared folder."
-                }
-            } catch (e: GoogleDriveSyncManager.DriveAuthorizationRequiredException) {
-                status = "Google Drive permission is required. Opening Google authorization…"
-                launchRecovery?.invoke(e.recoveryIntent)
-            } catch (e: Exception) {
-                status = "Sync failed: ${e.message ?: "Unknown error"}"
-            } finally {
-                busy = false
-            }
-        }
-    }
-
-    val signInLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.StartActivityForResult()
-    ) { result ->
-        try {
-            val selected = GoogleSignIn.getSignedInAccountFromIntent(result.data)
-                .getResult(ApiException::class.java)
-            account = selected
-            performSync(selected)
-        } catch (e: ApiException) {
-            status = "Google sign-in failed: statusCode=${e.statusCode}, message=${e.message ?: "none"}"
-        } catch (e: Exception) {
-            status = "Google sign-in failed: ${e.message ?: e.javaClass.simpleName}"
-        }
-    }
-
-    launchRecovery = { intent -> signInLauncher.launch(intent) }
-
-    val signInClient = remember(context) {
-        GoogleSignIn.getClient(
-            context,
-            GoogleSignInOptions.Builder(GoogleSignInOptions.DEFAULT_SIGN_IN)
-                .requestEmail()
-                .requestScopes(Scope(GoogleDriveSyncManager.DRIVE_FILE_SCOPE))
-                .build()
-        )
-    }
-
-    Column(
-        Modifier.fillMaxSize().padding(20.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
-    ) {
-        Card(Modifier.fillMaxWidth()) {
-            Column(Modifier.padding(20.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Sync", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                Text("Uses the shared School Manager folder and one database file.")
-                Text("Folder ID: ${GoogleDriveSyncManager.SHARED_FOLDER_ID}", style = MaterialTheme.typography.bodySmall)
-            }
-        }
-
-        if (account == null) {
-            Button(
-                onClick = { signInLauncher.launch(signInClient.signInIntent) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.AccountCircle, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text("Connect Google account")
-            }
-        } else {
-            ListItem(
-                leadingContent = { Icon(Icons.Default.AccountCircle, contentDescription = null) },
-                headlineContent = { Text(account?.email ?: account?.account?.name.orEmpty()) },
-                supportingContent = { Text("Connected to shared School Manager folder") }
-            )
-            Button(
-                onClick = { account?.let(::performSync) },
-                enabled = !busy,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Icon(Icons.Default.Sync, contentDescription = null)
-                Spacer(Modifier.width(8.dp))
-                Text(if (busy) "Syncing…" else "Sync")
-            }
-            ListItem(
-                headlineContent = { Text("Auto Sync") },
-                supportingContent = { Text("Sync automatically when internet is available (about every 15 minutes).") },
-                trailingContent = {
-                    Switch(
-                        checked = autoSync,
-                        onCheckedChange = { enabled ->
-                            autoSync = enabled
-                            prefs.edit().putBoolean(AutoSyncWorker.KEY_AUTO_SYNC, enabled).apply()
-                            if (enabled) {
-                                status = "Auto Sync enabled."
-                            } else {
-                                status = "Auto Sync disabled."
-                            }
-                        }
-                    )
-                }
-            )
-        }
-
-        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
-        status?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
-
-        HorizontalDivider()
-        Text("Shared database", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-        Text("• One school_manager.db is stored in the shared Google Drive folder.\n• Student records, marks, and teacher account hashes are merged during Sync.\n• Sign in with a Google account that has access to the shared folder.\n• Passwords are stored as salted hashes, not plain text.")
+    val auth = remember { FirebaseAuth.getInstance() }
+    var status by remember { mutableStateOf("Firebase sign-in: ${auth.currentUser?.email ?: auth.currentUser?.uid ?: "not signed in"}") }
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Text("Firebase Sync", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+        Text("Google Drive has been removed from this app. Authentication now uses Firebase Authentication, and teacher account operations use the trusted Firebase Functions backend.")
+        Text("Cloud record synchronization is not enabled in this migration step. Your existing local Room database has not been uploaded or cleared.")
+        Text(status, style = MaterialTheme.typography.bodyMedium)
+        Button(onClick = { status = "Firebase user: ${auth.currentUser?.email ?: auth.currentUser?.uid ?: "not signed in"}. Cloud data sync still needs its collection-level implementation." }, modifier = Modifier.fillMaxWidth()) { Icon(Icons.Default.Sync, null); Spacer(Modifier.width(8.dp)); Text("Check Firebase Status") }
+        OutlinedButton(onClick = { auth.signOut(); GoogleSignIn.getClient(context, com.google.android.gms.auth.api.signin.GoogleSignInOptions.DEFAULT_SIGN_IN).signOut(); status = "Signed out of Firebase." }, modifier = Modifier.fillMaxWidth()) { Text("Sign out") }
     }
 }
+
 
 @Composable
 private fun DemoScreen(name: String) {
