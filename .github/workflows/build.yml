@@ -66,8 +66,8 @@ jobs:
           RELEASE_STORE_PASSWORD: ${{ secrets.RELEASE_STORE_PASSWORD }}
           RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
           RELEASE_KEY_PASSWORD: ${{ secrets.RELEASE_KEY_PASSWORD }}
-        run: ./gradlew --no-daemon -Pandroid.useAndroidX=true -Pandroid.enableJetifier=true clean assembleRelease
-
+     #   run: ./gradlew --no-daemon -Pandroid.useAndroidX=true -Pandroid.enableJetifier=true clean assembleRelease
+        run: ./gradlew signingReport
       - name: Rename APK
         run: cp app/build/outputs/apk/release/app-release.apk school-manager-release.apk
 
