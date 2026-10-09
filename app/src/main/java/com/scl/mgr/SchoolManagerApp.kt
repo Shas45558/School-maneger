@@ -1567,24 +1567,24 @@ private fun MonthSelectionDialog(selected: List<String>, onDone: (List<String>) 
     var picked by remember(selected) { mutableStateOf(selected.toSet()) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Select this year's monthly exams (2 or 3)") },
+        title = { Text("Select this year's monthly exams (select 1 or more)") },
         text = {
             Column {
                 options.forEach { month ->
                     Row(Modifier.fillMaxWidth().clickable {
-                        picked = if (month in picked) picked - month else if (picked.size < 3) picked + month else picked
+                        picked = if (month in picked) picked - month else if (picked.size < 12) picked + month else picked
                     }.padding(vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = month in picked, onCheckedChange = {
-                            picked = if (it && picked.size < 3) picked + month else picked - month
+                            picked = if (it && picked.size < 12) picked + month else picked - month
                         })
                         Text(month)
                     }
                 }
-                Text("Selected: ${picked.size}/3", style = MaterialTheme.typography.bodySmall)
+                Text("Selected: ${picked.size}/12", style = MaterialTheme.typography.bodySmall)
             }
         },
         confirmButton = {
-            TextButton(enabled = picked.size == 2 || picked.size == 3, onClick = { onDone(picked.toList()) }) { Text("Apply") }
+            TextButton(enabled = picked.isNotEmpty(), onClick = { onDone(picked.toList()) }) { Text("Apply") }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } }
     )
