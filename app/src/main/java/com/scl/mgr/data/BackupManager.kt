@@ -45,12 +45,15 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
         tempFile.parentFile?.mkdirs()
         Files.copy(snapshot.toPath(), tempFile.toPath(), StandardCopyOption.REPLACE_EXISTING)
 
-        val remoteDb = Room.databaseBuilder(context, AppDatabase::class.java, tempName).build()
+        val remoteDb = Room.databaseBuilder(context, AppDatabase::class.java, tempName)
+            .addMigrations(AppDatabase.MIGRATION_1_2, AppDatabase.MIGRATION_2_3, AppDatabase.MIGRATION_3_4, AppDatabase.MIGRATION_4_5)
+            .build()
         try {
             val remoteStudents = remoteDb.studentDao().getAllOnce()
             val remoteAttendance = remoteDb.attendanceDao().getAllOnce()
             val remoteMonthlyExams = remoteDb.monthlyExamDao().getAllOnce()
             val remoteExamMarks = remoteDb.examMarkDao().getAllOnce()
+            val remoteTeacherAccounts = remoteDb.teacherAccountDao().getAllOnce()
             val localByKey = db.studentDao().getAllOnce().associateBy { key(it) }.toMutableMap()
             val idMap = mutableMapOf<Long, Long>()
             var addedStudents = 0
@@ -121,6 +124,13 @@ class BackupManager(private val context: Context, private val db: AppDatabase) {
                     val local = localExamMarks[key]!!
                     db.examMarkDao().upsert(local.copy(cq = local.cq ?: remoteMark.cq, mcq = local.mcq ?: remoteMark.mcq))
                 }
+            }
+
+            // Teacher credentials are salted hashes, never plaintext. Merge accounts by User ID.
+            // Keep existing local account values; add accounts that only exist in Drive.
+            val localTeacherIds = db.teacherAccountDao().getAllOnce().map { it.userId }.toSet()
+            for (teacherAccount in remoteTeacherAccounts) {
+                if (teacherAccount.userId !in localTeacherIds) db.teacherAccountDao().upsert(teacherAccount)
             }
 
             MergeResult(addedStudents, addedAttendance, addedMonthlyExams, addedExamMarks)

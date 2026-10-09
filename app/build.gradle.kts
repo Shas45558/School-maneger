@@ -3,6 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
     id("com.google.devtools.ksp")
+    id("com.google.gms.google-services")
 }
 
 android {
@@ -13,8 +14,8 @@ android {
         applicationId = "com.scl.mgr"
         minSdk = 26
         targetSdk = 35
-        versionCode = 16
-        versionName = "1.37"
+        versionCode = 17
+        versionName = "1.38"
     }
 
     // Release is optimized to reduce the final APK size.
@@ -100,6 +101,9 @@ dependencies {
     // Make Room migration/database support types explicit for KSP on CI.
     implementation("androidx.sqlite:sqlite:2.4.0")
     implementation("com.google.android.gms:play-services-auth:21.3.0")
+    implementation(platform("com.google.firebase:firebase-bom:33.7.0"))
+    implementation("com.google.firebase:firebase-auth-ktx")
+    implementation("com.google.firebase:firebase-firestore-ktx")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     ksp("androidx.room:room-compiler:2.6.1")
 }

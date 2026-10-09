@@ -8,8 +8,8 @@ import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
 @Database(
-    entities = [Student::class, Attendance::class, MonthlyExam::class, ExamMark::class],
-    version = 4,
+    entities = [Student::class, Attendance::class, MonthlyExam::class, ExamMark::class, TeacherAccount::class],
+    version = 5,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -17,16 +17,17 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun attendanceDao(): AttendanceDao
     abstract fun monthlyExamDao(): MonthlyExamDao
     abstract fun examMarkDao(): ExamMarkDao
+    abstract fun teacherAccountDao(): TeacherAccountDao
 
     companion object {
-        private val MIGRATION_1_2 = object : Migration(1, 2) {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE students ADD COLUMN gender TEXT NOT NULL DEFAULT ''")
                 db.execSQL("ALTER TABLE students ADD COLUMN religion TEXT NOT NULL DEFAULT ''")
             }
         }
 
-        private val MIGRATION_2_3 = object : Migration(2, 3) {
+        val MIGRATION_2_3 = object : Migration(2, 3) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS monthly_exams (
@@ -42,7 +43,7 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
-        private val MIGRATION_3_4 = object : Migration(3, 4) {
+        val MIGRATION_3_4 = object : Migration(3, 4) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("""
                     CREATE TABLE IF NOT EXISTS exam_marks (
@@ -58,6 +59,12 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS teacher_accounts (userId TEXT NOT NULL, salt TEXT NOT NULL, passwordHash TEXT NOT NULL, updatedAt INTEGER NOT NULL, PRIMARY KEY(userId))")
+            }
+        }
+
         @Volatile private var INSTANCE: AppDatabase? = null
 
         fun get(context: Context): AppDatabase =
@@ -67,7 +74,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "school_manager.db"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }
