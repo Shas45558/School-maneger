@@ -383,6 +383,7 @@ private fun AuthorizationScreen() {
                     message = "Teacher account created."; userId = ""; password = ""; confirmPassword = ""
                 } catch (e: Exception) { message = "Could not create account: ${e.message ?: "Unknown error"}" } finally { busy = false } }
             }
+            }
         }, modifier = Modifier.fillMaxWidth()) { Text(if (busy) "Creating…" else "Create User") }
         if (message.isNotBlank()) Text(message, color = MaterialTheme.colorScheme.primary)
     }
