@@ -526,6 +526,8 @@ private fun AuthorizationScreen(authPrefs: android.content.SharedPreferences, sy
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
 private fun AppScaffold(
     title: String,
     drawerState: DrawerState,
