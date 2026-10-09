@@ -13,8 +13,8 @@ android {
         applicationId = "com.scl.mgr"
         minSdk = 26
         targetSdk = 35
-        versionCode = 14
-        versionName = "1.35"
+        versionCode = 16
+        versionName = "1.37"
     }
 
     // Release is optimized to reduce the final APK size.
@@ -97,6 +97,8 @@ dependencies {
 
     implementation("androidx.room:room-runtime:2.6.1")
     implementation("androidx.room:room-ktx:2.6.1")
+    // Make Room migration/database support types explicit for KSP on CI.
+    implementation("androidx.sqlite:sqlite:2.4.0")
     implementation("com.google.android.gms:play-services-auth:21.3.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     ksp("androidx.room:room-compiler:2.6.1")
